@@ -41,6 +41,17 @@ class JanusSession {
           _sessionId = response['data']['id'] as int?;
           ws.sessionId = sessionId;
         }
+      } else if (_transport is MqttJanusTransport) {
+        final mqtt = _transport as MqttJanusTransport;
+        if (!mqtt.isConnected) {
+          await mqtt.connect();
+        }
+
+        response = await mqtt.send(request);
+        if (response!.containsKey('janus') && response.containsKey('data')) {
+          _sessionId = response['data']['id'] as int?;
+          mqtt.sessionId = sessionId;
+        }
       }
       _keepAlive();
     } on WebSocketChannelException catch (e) {
@@ -52,7 +63,7 @@ class JanusSession {
 
   /// This can be used to attach plugin handle to the session.<br><br>
   /// [opaqueId] : opaque id is an optional string identifier used for client side correlations in event handlers or admin API.<br>
-  Future<T> attach<T extends JanusPlugin>({String? opaqueId}) async {
+  Future<T> attach<T extends JanusPlugin>({String? opaqueId, String? package}) async {
     JanusPlugin plugin;
     int? handleId;
     String transaction = getUuid().v4();
@@ -76,6 +87,8 @@ class JanusSession {
       plugin = JanusEchoTestPlugin(transport: _transport, context: _context, handleId: handleId, session: this);
     } else if (T == JanusSipPlugin) {
       plugin = JanusSipPlugin(transport: _transport, context: _context, handleId: handleId, session: this);
+    } else if (package != null) {
+      plugin = JanusPlugin(transport: _transport!, context: _context, handleId: handleId, session: this, plugin: package);
     } else {
       throw UnimplementedError('''This Plugin is not defined kindly refer to Janus Server Docs
       make sure you specify the type of plugin you want to attach like session.attach<JanusVideoRoomPlugin>();
@@ -102,6 +115,17 @@ class JanusSession {
       }
       ws.sink!.add(stringify(request));
       response = parse(await ws.stream.firstWhere((element) => (parse(element)['transaction'] == transaction)));
+      if (response!.containsKey('janus') && response.containsKey('data')) {
+        handleId = response['data']['id'] as int?;
+        _context._logger.fine(response);
+      }
+    } else if (_transport is MqttJanusTransport) {
+      _context._logger.info('using mqtt transport for creating plugin handle');
+      final mqtt = _transport as MqttJanusTransport;
+      if (!mqtt.isConnected) {
+        await mqtt.connect();
+      }
+      response = await mqtt.send(request);
       if (response!.containsKey('janus') && response.containsKey('data')) {
         handleId = response['data']['id'] as int?;
         _context._logger.fine(response);
@@ -136,8 +160,7 @@ class JanusSession {
           if (_transport is RestJanusTransport) {
             RestJanusTransport rest = (_transport as RestJanusTransport);
             _context._logger.finer("keep alive using RestTransport");
-            response =
-                (await rest.post({"janus": "keepalive", "session_id": sessionId, "transaction": transaction, ..._context._apiMap, ..._context._tokenMap})) as Map<String, dynamic>;
+            response = (await rest.post({"janus": "keepalive", "session_id": sessionId, "transaction": transaction, ..._context._apiMap, ..._context._tokenMap})) as Map<String, dynamic>;
             _context._logger.finest(response);
           } else if (_transport is WebSocketJanusTransport) {
             _context._logger.finest("keep alive using WebSocketTransport");
@@ -150,6 +173,16 @@ class JanusSession {
             _context._logger.finest("keepalive request sent to webSocket");
             response = parse(await ws.stream.firstWhere((element) => (parse(element)['transaction'] == transaction)));
             _context._logger.finest(response);
+          } else if (_transport is MqttJanusTransport) {
+            _context._logger.info("keep alive using MqttJanusTransport");
+            final mqtt = _transport as MqttJanusTransport;
+            if (!mqtt.isConnected) {
+              _context._logger.fine("not connected trying to establish connection to mqtt");
+              await mqtt.connect();
+            }
+            _context._logger.fine("keepalive request send to mqtt");
+            response = await mqtt.send({"janus": "keepalive", "session_id": sessionId, "transaction": transaction, ..._context._apiMap, ..._context._tokenMap});
+            _context._logger.fine(response);
           }
         } catch (e) {
           timer.cancel();

@@ -128,6 +128,10 @@ class JanusPlugin {
       _wsStreamSubscription = (_transport as WebSocketJanusTransport).stream.listen((event) {
         _streamController!.add(parse(event));
       });
+    } else if (_transport is MqttJanusTransport) {
+      _wsStreamSubscription = (_transport as MqttJanusTransport).stream.listen((event) {
+        _streamController!.add(parse(event));
+      });
     }
   }
 
@@ -173,9 +177,10 @@ class JanusPlugin {
         if (event.streams.isEmpty) return;
         // Notify about the new track event
 
-        var mid = event.transceiver != null
-            ? event.transceiver?.mid
-            : event.receiver != null
+        var mid =
+            event.transceiver != null
+                ? event.transceiver?.mid
+                : event.receiver != null
                 ? event.receiver?.track?.id
                 : event.track.id;
         _remoteTrackStreamController?.add(RemoteTrack(track: event.track, mid: mid, flowing: true));
@@ -213,6 +218,9 @@ class JanusPlugin {
         } else if (_transport is WebSocketJanusTransport) {
           WebSocketJanusTransport ws = (_transport as WebSocketJanusTransport);
           response = (await ws.send(request, handleId: handleId)) as Map<String, dynamic>;
+        } else if (_transport is MqttJanusTransport) {
+          final mqtt = _transport as MqttJanusTransport;
+          response = (await mqtt.send(request, handleId: handleId)) as Map<String, dynamic>;
         }
         _streamController!.sink.add(response);
       }
@@ -221,23 +229,25 @@ class JanusPlugin {
 
   void _handleEventMessageEmitter() {
     //filter and only send events for current handleId
-    _events.where((event) {
-      Map<String, dynamic> result = event;
-      if (result.containsKey('sender')) {
-        if ((result['sender'] as int?) == handleId) return true;
-        return false;
-      } else {
-        return false;
-      }
-    }).listen((event) {
-      var jsep = event['jsep'];
-      if (jsep != null) {
-        _messagesStreamController!.sink.add(EventMessage(event: event, jsep: RTCSessionDescription(jsep['sdp'], jsep['type'])));
-      } else {
-        _addTrickleCandidate(event);
-        _messagesStreamController!.sink.add(EventMessage(event: event, jsep: null));
-      }
-    });
+    _events
+        .where((event) {
+          Map<String, dynamic> result = event;
+          if (result.containsKey('sender')) {
+            if ((result['sender'] as int?) == handleId) return true;
+            return false;
+          } else {
+            return false;
+          }
+        })
+        .listen((event) {
+          var jsep = event['jsep'];
+          if (jsep != null) {
+            _messagesStreamController!.sink.add(EventMessage(event: event, jsep: RTCSessionDescription(jsep['sdp'], jsep['type'])));
+          } else {
+            _addTrickleCandidate(event);
+            _messagesStreamController!.sink.add(EventMessage(event: event, jsep: null));
+          }
+        });
   }
 
   void _addTrickleCandidate(event) {
@@ -261,14 +271,14 @@ class JanusPlugin {
       if (_context._maxEvent != null) {
         queryParameters["maxev"] = _context._maxEvent.toString();
       }
-      if (_context._token != null){
+      if (_context._token != null) {
         queryParameters["token"] = _context._token!;
       }
       if (_context._apiSecret != null) {
         queryParameters["apisecret"] = _context._apiSecret!;
       }
-      var response = (await http.get(Uri.https(extractDomainFromUrl(_transport!.url!), "janus/"+_session!.sessionId.toString(), queryParameters)));
-      if (response.statusCode != 200 || response.body.isEmpty){
+      var response = (await http.get(Uri.https(extractDomainFromUrl(_transport!.url!), "janus/" + _session!.sessionId.toString(), queryParameters)));
+      if (response.statusCode != 200 || response.body.isEmpty) {
         var errorMessage = "polling is failed from janus with error code : ${response.statusCode} , header : ${response.headers}";
         print(response.body);
         print(response.statusCode);
@@ -420,6 +430,12 @@ class JanusPlugin {
           return;
         }
         response = await ws.send(request, handleId: handleId);
+      } else if (_transport is MqttJanusTransport) {
+        final mqtt = _transport as MqttJanusTransport;
+        if (!mqtt.isConnected) {
+          return;
+        }
+        response = await mqtt.send(request, handleId: handleId);
       }
       return response;
     } catch (e) {
@@ -484,10 +500,10 @@ class JanusPlugin {
             return;
           }
           await webRTCHandle!.peerConnection!.addTransceiver(
-              track: element,
-              kind: element.kind == 'audio' ? RTCRtpMediaType.RTCRtpMediaTypeAudio : RTCRtpMediaType.RTCRtpMediaTypeVideo,
-              init: RTCRtpTransceiverInit(
-                  streams: [webRTCHandle!.localStream!], direction: transceiverDirection, sendEncodings: element.kind == 'video' ? simulcastSendEncodings : null));
+            track: element,
+            kind: element.kind == 'audio' ? RTCRtpMediaType.RTCRtpMediaTypeAudio : RTCRtpMediaType.RTCRtpMediaTypeVideo,
+            init: RTCRtpTransceiverInit(streams: [webRTCHandle!.localStream!], direction: transceiverDirection, sendEncodings: element.kind == 'video' ? simulcastSendEncodings : null),
+          );
         });
       } else {
         _localStreamController!.sink.add(webRTCHandle!.localStream);
@@ -524,9 +540,9 @@ class JanusPlugin {
       await _disposeMediaStreams(ignoreRemote: true);
       webRTCHandle!.localStream = await navigator.mediaDevices.getUserMedia({
         'video': {
-          'deviceId': {'exact': deviceId}
+          'deviceId': {'exact': deviceId},
         },
-        'audio': true
+        'audio': true,
       });
       List<RTCRtpSender> senders = (await webRTCHandle!.peerConnection!.getSenders());
       webRTCHandle!.localStream?.getTracks().forEach((element) async {

@@ -123,3 +123,111 @@ class WebSocketJanusTransport extends JanusTransport {
     stream = channel!.stream.asBroadcastStream();
   }
 }
+
+class MqttJanusTransport extends JanusTransport {
+  MqttJanusTransport({
+    required String url,
+    required this.publishTopic,
+    required this.subscribeTopic,
+    this.clientIdentifier,
+  })  : assert(publishTopic.isNotEmpty, 'requestTopic is empty'),
+        assert(subscribeTopic.isNotEmpty, 'responseTopic is empty'),
+        assert(Uri.tryParse(url) != null, 'uri is invalid'),
+        super(url: url);
+
+  final String publishTopic, subscribeTopic;
+
+  final String? clientIdentifier;
+
+  bool get isConnected => _client.connectionStatus?.state == MqttConnectionState.connected;
+
+  StreamSubscription? _subs;
+  late final StreamController<Map<String, dynamic>> sink = () {
+    final controller = StreamController<Map<String, dynamic>>();
+    _subs = (controller.stream.where((event) => isConnected)).listen((event) {
+      final data = JsonEncoder().convert(event);
+      final payload = MqttClientPayloadBuilder().addString(data).payload!;
+      _client.publishMessage(publishTopic, MqttQos.exactlyOnce, payload);
+    });
+    return controller;
+  }();
+
+  Stream get stream => _client.updates!
+      .expand((element) => element)
+      .where((event) => event.topic == subscribeTopic)
+      .map((event) => event.payload)
+      .cast<MqttPublishMessage>()
+      .map((event) => event.payload.message)
+      .map(utf8.decode);
+
+  late final MqttClient _client = () {
+    final uri = Uri.parse(this.url!);
+    final url = uri.scheme.startsWith('ws') ? '${uri.scheme}://${uri.host}' : uri.host;
+    final clientId = clientIdentifier ?? (uri.userInfo.isEmpty ? getUuid().v4() : uri.userInfo.split(':').first);
+    final client = MqttPlatformClient(url, clientId)
+      ..port = uri.hasPort ? uri.port : 1883
+      ..setProtocolV311()
+      ..autoReconnect = true
+      ..keepAlivePeriod = 4000
+      ..connectionMessage = MqttConnectMessage().withClientIdentifier(clientId).startClean()
+      ..onConnected = (() => print('Mqtt Server Connected'))
+      ..onDisconnected = (() => print('Mqtt Server Disconected'))
+      ..websocketProtocols = MqttClientConstants.protocolsSingleDefault;
+    return client;
+  }();
+
+  Future<void> connect() async {
+    try {
+      final uri = Uri.parse(this.url!);
+      final username = uri.userInfo.isEmpty ? null : uri.userInfo.split(':').first;
+      final password = !uri.userInfo.contains(':') ? null : uri.userInfo.split(':').last;
+      final status = await _client.connect(username, password);
+      if (status?.state != MqttConnectionState.connected) {
+        throw Exception("The state is not connected: ${status?.state.name}:${status?.returnCode?.name}");
+      }
+      _client.subscribe(subscribeTopic, MqttQos.exactlyOnce);
+    } catch (e) {
+      print(e.toString());
+      print('something went wrong');
+      dispose();
+      rethrow;
+    }
+  }
+
+  Future<dynamic> send(Map<String, dynamic> data, {int? handleId}) async {
+    final String? transaction = data['transaction'];
+
+    if (transaction?.isEmpty ?? true) {
+      throw "transaction key missing in body";
+    }
+
+    if (sessionId != null) {
+      data['session_id'] = sessionId;
+    }
+
+    if (handleId != null) {
+      data['handle_id'] = handleId;
+    }
+
+    sink.add(data);
+
+    final result = await stream //
+        .map(parse)
+        .where((event) => event['transaction'] == transaction)
+        .timeout(Duration(seconds: 20))
+        .first;
+
+    return result;
+  }
+
+  void dispose() async {
+    await _subs?.cancel();
+    await sink.close();
+    _client.disconnect();
+  }
+
+  @override
+  Future getInfo() async {
+    return parse((await http.get(Uri.parse(url! + "/info"))).body);
+  }
+}

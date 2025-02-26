@@ -29,7 +29,7 @@ class JanusSipPlugin extends JanusPlugin {
     Map<String, dynamic>? headers,
     List<Map<String, dynamic>>? contactParams,
     List<String>? incomingHeaderPrefixes,
-    String? masterId,
+    int? masterId,
     int? registerTtl,
   }) async {
     var payload = {
