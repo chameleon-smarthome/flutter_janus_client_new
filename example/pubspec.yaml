@@ -6,17 +6,17 @@ description: Demonstrates how to use the janus_client plugin.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 
 environment:
-  sdk: ">=2.15.0 <3.0.0"
+  sdk: ">=3.7.0 <3.22.1"
 
 dependencies:
   flutter:
     sdk: flutter
-  characters: ^1.2.0
+  characters: 1.4.0
 
 
   janus_client:
     # When depending on this package from a real application you should use:
-    #   janus_client: ^x.y.z
+    #   janus_client: x.y.z
     # See https://dart.dev/tools/pub/dependencies#version-constraints
     # The example app is bundled with the plugin so we use a path dependency on
     # the parent directory to use the current plugin's version. 
@@ -24,10 +24,10 @@ dependencies:
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
-  cupertino_icons: ^1.0.4
-  prompt_dialog: ^1.0.9
-  flutter_foreground_task: ^3.10.0
-  permission_handler: ^10.4.3
+  cupertino_icons: 1.0.8
+  prompt_dialog: 1.0.17
+  flutter_foreground_task: 9.1.0
+  permission_handler: 12.0.0+1
 
 
 
