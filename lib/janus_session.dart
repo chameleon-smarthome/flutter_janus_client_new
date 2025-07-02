@@ -35,8 +35,7 @@ class JanusSession {
         if (!ws.isConnected) {
           ws.connect();
         }
-        ws.sink!.add(stringify(request));
-        response = parse(await ws.stream.firstWhere((element) => (parse(element)['transaction'] == transaction)));
+        response=await ws.send(request, handleId: null);
         if (response!.containsKey('janus') && response.containsKey('data')) {
           _sessionId = response['data']['id'] as int?;
           ws.sessionId = sessionId;
@@ -113,8 +112,7 @@ class JanusSession {
       if (!ws.isConnected) {
         ws.connect();
       }
-      ws.sink!.add(stringify(request));
-      response = parse(await ws.stream.firstWhere((element) => (parse(element)['transaction'] == transaction)));
+      response = await ws.send(request, handleId: null);
       if (response!.containsKey('janus') && response.containsKey('data')) {
         handleId = response['data']['id'] as int?;
         _context._logger.fine(response);
@@ -169,9 +167,8 @@ class JanusSession {
               _context._logger.finest("not connected trying to establish connection to webSocket");
               ws.connect();
             }
-            ws.sink!.add(stringify({"janus": "keepalive", "session_id": sessionId, "transaction": transaction, ..._context._apiMap, ..._context._tokenMap}));
+            response = await ws.send({"janus": "keepalive", "session_id": sessionId, "transaction": transaction, ..._context._apiMap, ..._context._tokenMap}, handleId: null);
             _context._logger.finest("keepalive request sent to webSocket");
-            response = parse(await ws.stream.firstWhere((element) => (parse(element)['transaction'] == transaction)));
             _context._logger.finest(response);
           } else if (_transport is MqttJanusTransport) {
             _context._logger.info("keep alive using MqttJanusTransport");

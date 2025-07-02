@@ -1,3 +1,18 @@
+## 2.3.11
+- feature: media constraints changes
+## 2.3.10
+- bugfix: change type of id to dynamic instead of int to support string ids
+- update:url for org 
+
+## 2.3.9
+- bugfix: websocket session send refactored to use Completer instead of error prone firstWhere
+
+## 2.3.8
+- bugfix: Data isn't serialized [#178](https://github.com/flutterjanus/flutter_janus_client/pull/178)
+
+## 2.3.7
+- flutter_webrtc upgraded to version: 0.14.0
+- better logs and bugfixes on safely disposing webrtc stack
 ## 2.3.6
 - flutter_webrtc upgraded to version: 0.13.0
 - refactor method `stopAllTracksAndDispose` to `stopAllTracks`

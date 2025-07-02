@@ -327,34 +327,49 @@ class JanusPlugin {
     }
   }
 
-  Future<void> hangup() async {
-    _cancelPollingTimer();
-    await _disposeMediaStreams();
-  }
-
   Future<void> _disposeMediaStreams({ignoreRemote = false, video = true, audio = true}) async {
     _context._logger.finest('disposing localStream and remoteStream if it already exists');
-    if (webRTCHandle!.localStream != null) {
+    if (webRTCHandle?.localStream != null) {
       if (audio) {
         webRTCHandle?.localStream?.getAudioTracks().forEach((element) async {
+          _context._logger.finest('stoping localStream => audio track ${element.toString()}');
           await element.stop();
         });
       }
       if (video) {
         webRTCHandle?.localStream?.getVideoTracks().forEach((element) async {
+          _context._logger.finest('stoping localStream => video track ${element.toString()}');
           await element.stop();
         });
       }
-      if (audio && video) {
-        webRTCHandle?.localStream?.dispose();
+      if (audio || video) {
+        try {
+          _context._logger.finest('disposing webRTCHandle?.localStream');
+          await webRTCHandle?.localStream?.dispose();
+        } catch (e) {
+          _context._logger.severe('failed to dispose webRTCHandle?.localStream with error $e');
+        }
       }
+      webRTCHandle?.localStream = null;
     }
-    if (webRTCHandle!.remoteStream != null && !ignoreRemote) {
+    if (webRTCHandle?.remoteStream != null && !ignoreRemote) {
       webRTCHandle?.remoteStream?.getTracks().forEach((element) async {
+        _context._logger.finest('stoping remoteStream => ${element.toString()}');
         await element.stop();
       });
-      webRTCHandle?.remoteStream?.dispose();
+      try {
+        _context._logger.finest('disposing webRTCHandle?.remoteStream');
+        await webRTCHandle?.remoteStream?.dispose();
+      } catch (e) {
+        _context._logger.severe('failed to dispose webRTCHandle?.remoteStream with error $e');
+      }
+      webRTCHandle?.remoteStream = null;
     }
+  }
+
+  Future<void> hangup() async {
+    _cancelPollingTimer();
+    await _disposeMediaStreams();
   }
 
   /// This function takes care of cleaning up all the internal stream controller and timers used to make janus_client compatible with streams and polling support
@@ -380,6 +395,9 @@ class JanusPlugin {
     await webRTCHandle?.remoteStream?.dispose();
     await webRTCHandle?.localStream?.dispose();
     await webRTCHandle?.peerConnection?.dispose();
+    webRTCHandle?.localStream = null;
+    webRTCHandle?.remoteStream = null;
+    webRTCHandle?.peerConnection = null;
   }
 
   /// this method Initialize data channel on handle's internal peer connection object.
@@ -454,6 +472,7 @@ class JanusPlugin {
   ///Helper method that generates MediaStream from your device camera that will be automatically added to peer connection instance internally used by janus client
   ///
   /// [useDisplayMediaDevices] : It can be used to capture your device screen.<br>
+  /// [disableDevicePrediction] : Disable device prediction when video or audio is not specified or unknown.<br>
   /// [mediaConstraints] : Using this map you can specify media contraits such as resolution and fps etc.<br>
   /// [simulcastSendEncodings] : This list is used to specify encoding for simulcasting or (svc if room codec is vp9)<br>
   /// [transceiverDirection] : It will be ignored if you don't specify [simulcastSendEncodings]
@@ -462,27 +481,35 @@ class JanusPlugin {
   Future<MediaStream?> initializeMediaDevices({
     Map<String, dynamic>? mediaConstraints,
     bool useDisplayMediaDevices = false,
+    bool disableDevicePrediction = false,
     TransceiverDirection? transceiverDirection = TransceiverDirection.SendOnly,
     List<RTCRtpEncoding>? simulcastSendEncodings,
   }) async {
     await _disposeMediaStreams(ignoreRemote: true);
-    List<MediaDeviceInfo> videoDevices = await getVideoInputDevices();
-    List<MediaDeviceInfo> audioDevices = await getAudioInputDevices();
-    if (videoDevices.isEmpty && audioDevices.isEmpty && !useDisplayMediaDevices) {
-      throw Exception("No device found for media generation");
-    }
-    if (mediaConstraints == null) {
-      if (videoDevices.isEmpty && audioDevices.isNotEmpty) {
-        mediaConstraints = {"audio": true, "video": false};
-      } else if (videoDevices.length == 1 && audioDevices.isNotEmpty) {
-        mediaConstraints = {"audio": true, 'video': true};
-      } else {
-        mediaConstraints = {
-          "audio": audioDevices.length > 0,
-          'video': {
-            'deviceId': {'exact': videoDevices.first.deviceId},
-          },
-        };
+    if (!disableDevicePrediction) {
+      List<MediaDeviceInfo> videoDevices = await getVideoInputDevices();
+      List<MediaDeviceInfo> audioDevices = await getAudioInputDevices();
+      if (videoDevices.isEmpty && audioDevices.isEmpty &&
+          !useDisplayMediaDevices) {
+        throw Exception("No device found for media generation");
+      }
+      if (mediaConstraints == null) {
+        if (videoDevices.isEmpty && audioDevices.isNotEmpty) {
+          mediaConstraints = {"audio": true, "video": false};
+        } else if (videoDevices.length == 1 && audioDevices.isNotEmpty) {
+          mediaConstraints = {"audio": true, 'video': true};
+        } else {
+          mediaConstraints = {
+            "audio": audioDevices.length > 0,
+            'video': {
+              'deviceId': {'exact': videoDevices.first.deviceId},
+            },
+          };
+        }
+      }
+    } else {
+      if (mediaConstraints == null) {
+        throw Exception("No media constraints set");
       }
     }
     _context._logger.fine(mediaConstraints);
