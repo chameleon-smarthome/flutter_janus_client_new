@@ -19,3 +19,4 @@ example/.flutter-plugins-dependencies
 flutter_janus_client.dart
 flutter_janus_client_method_channel.dart
 flutter_janus_client_platform_interface.dart
+.flutter-plugins-dependencies

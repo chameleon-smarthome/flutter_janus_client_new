@@ -1,3 +1,7 @@
+## 2.3.13
+- downgrade to flutter_webrtc to version: 0.14.2 since 1.0.0 has issues with android seemingly unstable see [crashing on android](https://github.com/flutter-webrtc/flutter-webrtc/issues/1906)
+## 2.3.12
+- upgrade flutter_webrtc to version: 1.0.0
 ## 2.3.11
 - feature: media constraints changes
 ## 2.3.10

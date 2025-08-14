@@ -6,7 +6,8 @@ description: Demonstrates how to use the janus_client plugin.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 
 environment:
-  sdk: ">=3.7.0 <3.22.1"
+  sdk: ">=3.8.0 <3.22.1"
+  flutter: ">=3.29.0"
 
 dependencies:
   flutter:
@@ -25,9 +26,9 @@ dependencies:
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: 1.0.8
-  prompt_dialog: 1.0.17
+  prompt_dialog: 1.0.18
   flutter_foreground_task: 9.1.0
-  permission_handler: 12.0.0+1
+  permission_handler: 12.0.1
 
 
 
