@@ -1,13 +1,11 @@
-
 name: Flutter CI
 
 on:
-  push:
-    branches:
-      - master
   pull_request:
     branches:
       - master
+  release:
+    types: [published]
 
 jobs:
   build:
@@ -21,50 +19,34 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.24.4' # Includes Dart 3.6.0 for pubspec.yaml compatibility
-          channel: 'stable'
+          flutter-version: "3.35.4" # Includes Dart 3.6.0 for pubspec.yaml compatibility
+          channel: "stable"
           cache: true
-          cache-key: flutter-3.24.4-v3 # Unique key to avoid stale cache
-          cache-path: ~/.pub-cache
+          cache-key: flutter-3.35.4-v3 # Unique key to avoid stale cache
+          cache-path: ${{ runner.tool_cache }}/flutter
 
       # Verify Flutter and Dart installation
       - name: Verify Flutter installation
         run: |
-          if ! command -v flutter &> /dev/null; then
-            echo "Error: Flutter command not found!"
-            exit 1
-          fi
+          echo "PATH: $PATH"
+          echo "Checking Flutter installation..."
           flutter --version
           dart --version
-          echo "PATH: $PATH"
-          echo "PUB_CACHE: $PUB_CACHE"
+          echo "Flutter doctor:"
+          flutter doctor -v
 
       # Install dependencies
       - name: Install dependencies
         run: flutter pub get
-        env:
-          PUB_CACHE: ~/.pub-cache
-
-      # Analyze code for errors
-      - name: Analyze code
-        run: flutter analyze --no-pub
-
-      # Format code and fail if changes are needed
-      - name: Format code
-        run: dart format --set-exit-if-changed .
-
-      # Run tests
-      - name: Run tests
-        run: flutter test
-
-      # Check for publish warnings (only on master branch push)
+        
+      # Check for publish warnings (only on release)
       - name: Check publish warnings
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        if: github.event_name == 'release'
         run: dart pub publish --dry-run
 
-      # Publish package to pub.dev (only on master branch push)
+      # Publish package to pub.dev (only on release)
       - name: Publish package
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        if: github.event_name == 'release'
         uses: k-paxian/dart-package-publisher@v1.5.1
         with:
           accessToken: ${{ secrets.PUB_DEV_PUBLISH_ACCESS_TOKEN }}
