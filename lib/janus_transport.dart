@@ -30,9 +30,7 @@ class RestJanusTransport extends JanusTransport {
       suffixUrl = suffixUrl + "/$sessionId/$handleId";
     }
     try {
-      var response =
-          (await http.post(Uri.parse(url! + suffixUrl), body: stringify(body)))
-              .body;
+      var response = (await http.post(Uri.parse(url! + suffixUrl), body: stringify(body))).body;
       return parse(response);
     } on JsonCyclicError {
       return null;
@@ -68,10 +66,13 @@ class RestJanusTransport extends JanusTransport {
 ///
 /// This transport class is provided to [JanusClient] instances in transport property in order to <br>
 /// inform the plugin that we need to use WebSockets as a transport mechanism for communicating with Janus Server.<br>
+/// sendCompleterTimeout is used to set timeout duration for each send request to Janus server resolving against transaction.
 class WebSocketJanusTransport extends JanusTransport {
-  WebSocketJanusTransport({String? url, this.pingInterval}) : super(url: url);
+  WebSocketJanusTransport({String? url, this.sendCompleterTimeout = const Duration(seconds: 20)}) : super(url: url);
   WebSocketChannel? channel;
-  Duration? pingInterval;
+
+  /// Controls how long a transaction waits for a Janus response before timing out.
+  Duration sendCompleterTimeout;
   WebSocketSink? sink;
   late Stream stream;
   bool isConnected = false;
@@ -102,8 +103,7 @@ class WebSocketJanusTransport extends JanusTransport {
 
     sink!.add(stringify(data));
 
-    // Optionally add a timeout
-    return completer.future.timeout(Duration(seconds: 10), onTimeout: () {
+    return completer.future.timeout(this.sendCompleterTimeout, onTimeout: () {
       _pendingTransactions.remove(transaction);
       throw TimeoutException('Timed out waiting for transaction $transaction');
     });
@@ -125,8 +125,7 @@ class WebSocketJanusTransport extends JanusTransport {
   void connect() {
     try {
       isConnected = true;
-      channel = WebSocketChannel.connect(Uri.parse(url!),
-          protocols: ['janus-protocol']);
+      channel = WebSocketChannel.connect(Uri.parse(url!), protocols: ['janus-protocol']);
     } catch (e) {
       print(e.toString());
       print('something went wrong');
@@ -138,8 +137,7 @@ class WebSocketJanusTransport extends JanusTransport {
     stream.listen((event) {
       final msg = parse(event);
       final transaction = msg['transaction'];
-      if (transaction != null &&
-          _pendingTransactions.containsKey(transaction)) {
+      if (transaction != null && _pendingTransactions.containsKey(transaction)) {
         _pendingTransactions[transaction]!.complete(msg);
         _pendingTransactions.remove(transaction);
       }

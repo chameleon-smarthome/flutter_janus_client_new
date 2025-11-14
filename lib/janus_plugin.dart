@@ -22,9 +22,7 @@ class JanusPlugin {
   // internal method which takes care of type of roomId which is normally int but can be string if set in janus config for room
   _handleRoomIdTypeDifference(dynamic payload) {
     if (payload["room"] != null) {
-      payload["room"] = _context._stringIds == false
-          ? payload["room"]
-          : payload["room"].toString();
+      payload["room"] = _context._stringIds == false ? payload["room"] : payload["room"].toString();
     }
   }
 
@@ -66,27 +64,24 @@ class JanusPlugin {
     return webRTCHandle?.peerConnection;
   }
 
-  JanusPlugin(
-      {this.handleId,
-      required JanusClient context,
-      required JanusTransport transport,
-      required JanusSession session,
-      this.plugin}) {
+  JanusPlugin({this.handleId, required JanusClient context, required JanusTransport transport, required JanusSession session, this.plugin}) {
     _context = context;
     _session = session;
     _transport = transport;
   }
 
-  /// used to initialize/reinitialize entire webrtc stack if it is required for your application purpose
+  /// Initializes or re-initializes the internal WebRTC stack for this plugin.
+  ///
+  /// The method expects `_webRtcConfiguration` to be populated via [_init] and
+  /// creates a fresh `RTCPeerConnection`, wiring renegotiation, track, and ICE
+  /// callbacks before storing the resulting [JanusWebRTCHandle].
   Future<void> initializeWebRTCStack() async {
     if (_webRtcConfiguration == null) {
-      _context._logger.shout(
-          'initializeWebRTCStack:-configuration is null call init before calling me');
+      _context._logger.shout('initializeWebRTCStack:-configuration is null call init before calling me');
       return;
     }
     _context._logger.finest('webRTC stack intialized');
-    RTCPeerConnection peerConnection =
-        await createPeerConnection(_webRtcConfiguration!, {});
+    RTCPeerConnection peerConnection = await createPeerConnection(_webRtcConfiguration!, {});
     peerConnection.onRenegotiationNeeded = () {
       _renegotiationNeededController?.sink.add(true);
     };
@@ -97,8 +92,11 @@ class JanusPlugin {
     webRTCHandle = JanusWebRTCHandle(peerConnection: peerConnection);
   }
 
-  // used internally for initializing plugin, exposed only to be called via [JanusSession] attach method.
-  // `not useful for external operations`
+  /// Internal helper invoked by [JanusSession.attach] to finish plugin setup.
+  ///
+  /// The method configures the peer connection, prepares event streams, and
+  /// activates transport-specific listeners. External code should rely on
+  /// [JanusSession.attach] instead of calling this directly.
   Future<void> _init() async {
     if (!_initialized) {
       _initialized = true;
@@ -107,11 +105,7 @@ class JanusPlugin {
         return;
       }
       // initializing WebRTC Handle
-      _webRtcConfiguration = {
-        "iceServers": _context._iceServers != null
-            ? _context._iceServers!.map((e) => e.toMap()).toList()
-            : []
-      };
+      _webRtcConfiguration = {"iceServers": _context._iceServers != null ? _context._iceServers!.map((e) => e.toMap()).toList() : []};
       if (_context._isUnifiedPlan && !_context._usePlanB) {
         _webRtcConfiguration?.putIfAbsent('sdpSemantics', () => 'unified-plan');
       } else {
@@ -133,6 +127,7 @@ class JanusPlugin {
     }
   }
 
+  /// Binds listeners according to the selected transport (REST polling or WS).
   void _handleTransportInitialization() {
     if (_transport is RestJanusTransport) {
       _pollingTimer = Timer.periodic(_context._pollingInterval, (timer) async {
@@ -142,8 +137,7 @@ class JanusPlugin {
         await _handlePolling();
       });
     } else if (_transport is WebSocketJanusTransport) {
-      _wsStreamSubscription =
-          (_transport as WebSocketJanusTransport).stream.listen((event) {
+      _wsStreamSubscription = (_transport as WebSocketJanusTransport).stream.listen((event) {
         _streamController!.add(parse(event));
       });
     } else if (_transport is MqttJanusTransport) {
@@ -153,6 +147,7 @@ class JanusPlugin {
     }
   }
 
+  /// Sets up the broadcast stream controllers used throughout the plugin.
   void _initStreamControllersAndStreams() {
     //source and stream for session level events
     _streamController = StreamController<dynamic>();
@@ -166,8 +161,7 @@ class JanusPlugin {
 
     //typed source and stream for plugin level events
     _typedMessagesStreamController = StreamController<TypedEvent<JanusEvent>>();
-    typedMessages = _typedMessagesStreamController!.stream.asBroadcastStream()
-        as Stream<TypedEvent<JanusEvent>>?;
+    typedMessages = _typedMessagesStreamController!.stream.asBroadcastStream() as Stream<TypedEvent<JanusEvent>>?;
 
     // remote track for unified plan support
     _remoteTrackStreamController = StreamController<RemoteTrack>();
@@ -185,10 +179,10 @@ class JanusPlugin {
     onData = _onDataStreamController!.stream.asBroadcastStream();
     // data channel state stream contoller
     _renegotiationNeededController = StreamController<void>();
-    renegotiationNeeded =
-        _renegotiationNeededController!.stream.asBroadcastStream();
+    renegotiationNeeded = _renegotiationNeededController!.stream.asBroadcastStream();
   }
 
+  /// Registers handlers that translate WebRTC track events to Janus streams.
   void _handleUnifiedWebRTCTracksEmitter(RTCPeerConnection peerConnection) {
     if (_context._isUnifiedPlan && !_context._usePlanB) {
       peerConnection.onTrack = (RTCTrackEvent event) async {
@@ -203,23 +197,16 @@ class JanusPlugin {
                 : event.receiver != null
                 ? event.receiver?.track?.id
                 : event.track.id;
-        _remoteTrackStreamController
-            ?.add(RemoteTrack(track: event.track, mid: mid, flowing: true));
+        _remoteTrackStreamController?.add(RemoteTrack(track: event.track, mid: mid, flowing: true));
         event.track.onEnded = () async {
           // Notify the application
-          if (!_remoteTrackStreamController!.isClosed)
-            _remoteTrackStreamController?.add(
-                RemoteTrack(track: event.track, mid: mid, flowing: false));
+          if (!_remoteTrackStreamController!.isClosed) _remoteTrackStreamController?.add(RemoteTrack(track: event.track, mid: mid, flowing: false));
         };
         event.track.onMute = () async {
-          if (!_remoteTrackStreamController!.isClosed)
-            _remoteTrackStreamController?.add(
-                RemoteTrack(track: event.track, mid: mid, flowing: false));
+          if (!_remoteTrackStreamController!.isClosed) _remoteTrackStreamController?.add(RemoteTrack(track: event.track, mid: mid, flowing: false));
         };
         event.track.onUnMute = () async {
-          if (!_remoteTrackStreamController!.isClosed)
-            _remoteTrackStreamController
-                ?.add(RemoteTrack(track: event.track, mid: mid, flowing: true));
+          if (!_remoteTrackStreamController!.isClosed) _remoteTrackStreamController?.add(RemoteTrack(track: event.track, mid: mid, flowing: true));
         };
       };
     }
@@ -229,26 +216,20 @@ class JanusPlugin {
     };
   }
 
+  /// Sends gathered ICE candidates to the Janus backend for this handle.
   void _handleIceCandidatesSending(RTCPeerConnection peerConnection) {
     // get ice candidates and send to janus on this plugin handle
     peerConnection.onIceCandidate = (RTCIceCandidate candidate) async {
       Map<String, dynamic>? response;
       if (!plugin!.contains('textroom')) {
         this._context._logger.finest('sending trickle');
-        Map<String, dynamic> request = {
-          "janus": "trickle",
-          "candidate": candidate.toMap(),
-          "transaction": getUuid().v4(),
-          ..._context._apiMap,
-          ..._context._tokenMap
-        };
+        Map<String, dynamic> request = {"janus": "trickle", "candidate": candidate.toMap(), "transaction": getUuid().v4(), ..._context._apiMap, ..._context._tokenMap};
         request["session_id"] = _session!.sessionId;
         request["handle_id"] = handleId;
         //checking and posting using websocket if in available
         if (_transport is RestJanusTransport) {
           RestJanusTransport rest = (_transport as RestJanusTransport);
-          response = (await rest.post(request, handleId: handleId))
-              as Map<String, dynamic>;
+          response = (await rest.post(request, handleId: handleId)) as Map<String, dynamic>;
         } else if (_transport is WebSocketJanusTransport) {
           WebSocketJanusTransport ws = (_transport as WebSocketJanusTransport);
           response = (await ws.send(request, handleId: handleId))
@@ -262,6 +243,7 @@ class JanusPlugin {
     };
   }
 
+  /// Filters session-level events and emits those that match this handle.
   void _handleEventMessageEmitter() {
     //filter and only send events for current handleId
     _events.where((event) {
@@ -275,27 +257,25 @@ class JanusPlugin {
     }).listen((event) {
       var jsep = event['jsep'];
       if (jsep != null) {
-        _messagesStreamController!.sink.add(EventMessage(
-            event: event,
-            jsep: RTCSessionDescription(jsep['sdp'], jsep['type'])));
+        _messagesStreamController!.sink.add(EventMessage(event: event, jsep: RTCSessionDescription(jsep['sdp'], jsep['type'])));
       } else {
         _addTrickleCandidate(event);
-        _messagesStreamController!.sink
-            .add(EventMessage(event: event, jsep: null));
+        _messagesStreamController!.sink.add(EventMessage(event: event, jsep: null));
       }
     });
   }
 
+  /// Applies a single trickle candidate to the active peer connection.
   void _addTrickleCandidate(event) {
     final isTrickleEvent = event['janus'] == 'trickle';
     if (isTrickleEvent) {
       final candidateMap = event['candidate'];
-      RTCIceCandidate candidate = RTCIceCandidate(candidateMap['candidate'],
-          candidateMap['sdpMid'], candidateMap['sdpMLineIndex']);
+      RTCIceCandidate candidate = RTCIceCandidate(candidateMap['candidate'], candidateMap['sdpMid'], candidateMap['sdpMLineIndex']);
       webRTCHandle!.peerConnection!.addCandidate(candidate);
     }
   }
 
+  /// Pulls pending Janus events when REST polling is active.
   _handlePolling() async {
     if (!pollingActive) return;
     if (_session!.sessionId == null) {
@@ -304,8 +284,7 @@ class JanusPlugin {
     }
     try {
       Map<String, String> queryParameters = {};
-      queryParameters["rid"] =
-          new DateTime.now().millisecondsSinceEpoch.toString();
+      queryParameters["rid"] = new DateTime.now().millisecondsSinceEpoch.toString();
       if (_context._maxEvent != null) {
         queryParameters["maxev"] = _context._maxEvent.toString();
       }
@@ -315,13 +294,9 @@ class JanusPlugin {
       if (_context._apiSecret != null) {
         queryParameters["apisecret"] = _context._apiSecret!;
       }
-      var response = (await http.get(Uri.https(
-          extractDomainFromUrl(_transport!.url!),
-          "janus/" + _session!.sessionId.toString(),
-          queryParameters)));
+      var response = (await http.get(Uri.https(extractDomainFromUrl(_transport!.url!), "janus/" + _session!.sessionId.toString(), queryParameters)));
       if (response.statusCode != 200 || response.body.isEmpty) {
-        var errorMessage =
-            "polling is failed from janus with error code : ${response.statusCode} , header : ${response.headers}";
+        var errorMessage = "polling is failed from janus with error code : ${response.statusCode} , header : ${response.headers}";
         print(response.body);
         print(response.statusCode);
         print(errorMessage);
@@ -329,10 +304,7 @@ class JanusPlugin {
         throw errorMessage;
       }
       var decodedResponse = parse(response.body);
-      List<dynamic> json =
-          ((decodedResponse != null && decodedResponse.isNotEmpty))
-              ? decodedResponse
-              : [];
+      List<dynamic> json = ((decodedResponse != null && decodedResponse.isNotEmpty)) ? decodedResponse : [];
       json.forEach((element) {
         if (!_streamController!.isClosed) {
           _streamController!.add(element);
@@ -360,34 +332,34 @@ class JanusPlugin {
     return;
   }
 
-  /// You can check whether a room exists using the exists
+  /// Checks whether a Janus room identified by [roomId] exists.
   Future<dynamic> exists(int roomId) async {
     var payload = {"request": "exists", "room": roomId};
     return (await this.send(data: payload));
   }
 
+  /// Cancels the REST polling timer if it is currently running.
   void _cancelPollingTimer() {
     if (_pollingTimer != null) {
       _pollingTimer!.cancel();
     }
   }
 
-  Future<void> _disposeMediaStreams(
-      {ignoreRemote = false, video = true, audio = true}) async {
-    _context._logger
-        .finest('disposing localStream and remoteStream if it already exists');
+  /// Disposes the active local stream and, unless [ignoreRemote] is `true`, the
+  /// remote stream as well. Optional [video] and [audio] flags allow selectively
+  /// stopping tracks before disposing their parent streams.
+  Future<void> _disposeMediaStreams({ignoreRemote = false, video = true, audio = true}) async {
+    _context._logger.finest('disposing localStream and remoteStream if it already exists');
     if (webRTCHandle?.localStream != null) {
       if (audio) {
         webRTCHandle?.localStream?.getAudioTracks().forEach((element) async {
-          _context._logger.finest(
-              'stoping localStream => audio track ${element.toString()}');
+          _context._logger.finest('stoping localStream => audio track ${element.toString()}');
           await element.stop();
         });
       }
       if (video) {
         webRTCHandle?.localStream?.getVideoTracks().forEach((element) async {
-          _context._logger.finest(
-              'stoping localStream => video track ${element.toString()}');
+          _context._logger.finest('stoping localStream => video track ${element.toString()}');
           await element.stop();
         });
       }
@@ -396,36 +368,33 @@ class JanusPlugin {
           _context._logger.finest('disposing webRTCHandle?.localStream');
           await webRTCHandle?.localStream?.dispose();
         } catch (e) {
-          _context._logger.severe(
-              'failed to dispose webRTCHandle?.localStream with error $e');
+          _context._logger.severe('failed to dispose webRTCHandle?.localStream with error $e');
         }
       }
       webRTCHandle?.localStream = null;
     }
     if (webRTCHandle?.remoteStream != null && !ignoreRemote) {
       webRTCHandle?.remoteStream?.getTracks().forEach((element) async {
-        _context._logger
-            .finest('stoping remoteStream => ${element.toString()}');
+        _context._logger.finest('stoping remoteStream => ${element.toString()}');
         await element.stop();
       });
       try {
         _context._logger.finest('disposing webRTCHandle?.remoteStream');
         await webRTCHandle?.remoteStream?.dispose();
       } catch (e) {
-        _context._logger.severe(
-            'failed to dispose webRTCHandle?.remoteStream with error $e');
+        _context._logger.severe('failed to dispose webRTCHandle?.remoteStream with error $e');
       }
       webRTCHandle?.remoteStream = null;
     }
   }
 
+  /// Stops polling and disposes media resources without fully disposing the handle.
   Future<void> hangup() async {
     _cancelPollingTimer();
     await _disposeMediaStreams();
   }
 
-  /// This function takes care of cleaning up all the internal stream controller and timers used to make janus_client compatible with streams and polling support
-  ///
+  /// Disposes timers, stream controllers, transports, and media tied to this plugin.
   Future<void> dispose() async {
     this.pollingActive = false;
     _pollingTimer?.cancel();
@@ -440,8 +409,7 @@ class JanusPlugin {
     _renegotiationNeededController?.close();
     _wsStreamSubscription?.cancel();
     await stopAllTracks(webRTCHandle?.localStream);
-    (await webRTCHandle?.peerConnection?.getTransceivers())
-        ?.forEach((element) async {
+    (await webRTCHandle?.peerConnection?.getTransceivers())?.forEach((element) async {
       await element.stop();
     });
     await webRTCHandle?.peerConnection?.close();
@@ -453,53 +421,39 @@ class JanusPlugin {
     webRTCHandle?.peerConnection = null;
   }
 
-  /// this method Initialize data channel on handle's internal peer connection object.
-  /// It is mainly used for Janus TextRoom and can be used for other plugins with data channel support
+  /// Creates the default data channel when missing for TextRoom/data usage.
   Future<void> initDataChannel({RTCDataChannelInit? rtcDataChannelInit}) async {
     if (webRTCHandle!.peerConnection != null) {
-      if (webRTCHandle!.dataChannel[_context._dataChannelDefaultLabel] != null)
-        return;
+      if (webRTCHandle!.dataChannel[_context._dataChannelDefaultLabel] != null) return;
       if (rtcDataChannelInit == null) {
         rtcDataChannelInit = RTCDataChannelInit();
         rtcDataChannelInit.ordered = true;
         rtcDataChannelInit.protocol = 'janus-protocol';
       }
-      webRTCHandle!.dataChannel[_context._dataChannelDefaultLabel] =
-          await webRTCHandle!.peerConnection!.createDataChannel(
-              _context._dataChannelDefaultLabel, rtcDataChannelInit);
-      if (webRTCHandle!.dataChannel[_context._dataChannelDefaultLabel] !=
-          null) {
-        webRTCHandle!.dataChannel[_context._dataChannelDefaultLabel]!
-            .onDataChannelState = (state) {
+      webRTCHandle!.dataChannel[_context._dataChannelDefaultLabel] = await webRTCHandle!.peerConnection!.createDataChannel(_context._dataChannelDefaultLabel, rtcDataChannelInit);
+      if (webRTCHandle!.dataChannel[_context._dataChannelDefaultLabel] != null) {
+        webRTCHandle!.dataChannel[_context._dataChannelDefaultLabel]!.onDataChannelState = (state) {
           if (!_onDataStreamController!.isClosed) {
             _onDataStreamController!.sink.add(state);
           }
         };
-        webRTCHandle!.dataChannel[_context._dataChannelDefaultLabel]!
-            .onMessage = (RTCDataChannelMessage message) {
+        webRTCHandle!.dataChannel[_context._dataChannelDefaultLabel]!.onMessage = (RTCDataChannelMessage message) {
           if (!_dataStreamController!.isClosed) {
             _dataStreamController!.sink.add(message);
           }
         };
       }
     } else {
-      throw Exception(
-          "You Must Initialize Peer Connection before even attempting data channel creation!");
+      throw Exception("You Must Initialize Peer Connection before even attempting data channel creation!");
     }
   }
 
-  /// This method is crucial for communicating with Janus Server's APIs it takes in data and optionally jsep for negotiating with webrtc peers
+  /// Sends a Janus `message` with optional SDP negotiation data.
   Future<dynamic> send({dynamic data, RTCSessionDescription? jsep}) async {
     try {
       String transaction = getUuid().v4();
       Map<String, dynamic>? response;
-      Map<String, dynamic> request = {
-        "janus": "message",
-        "body": data,
-        "transaction": transaction,
-        ..._context._apiMap,
-        ..._context._tokenMap
-      };
+      Map<String, dynamic> request = {"janus": "message", "body": data, "transaction": transaction, ..._context._apiMap, ..._context._tokenMap};
       if (jsep != null) {
         _context._logger.finest("sending jsep");
         _context._logger.finest(jsep.toMap());
@@ -507,8 +461,7 @@ class JanusPlugin {
       }
       if (_transport is RestJanusTransport) {
         RestJanusTransport rest = (_transport as RestJanusTransport);
-        response = (await rest.post(request, handleId: handleId))
-            as Map<String, dynamic>;
+        response = (await rest.post(request, handleId: handleId)) as Map<String, dynamic>;
       } else if (_transport is WebSocketJanusTransport) {
         WebSocketJanusTransport ws = (_transport as WebSocketJanusTransport);
         if (!ws.isConnected) {
@@ -528,7 +481,7 @@ class JanusPlugin {
     }
   }
 
-  /// It allows you to set Remote Description on internal peer connection, Received from janus server
+  /// Applies the remote [RTCSessionDescription] provided by Janus to this peer connection.
   Future<void> handleRemoteJsep(RTCSessionDescription? data) async {
     // var state = webRTCHandle?.peerConnection?.signalingState;
     if (data != null) {
@@ -536,82 +489,164 @@ class JanusPlugin {
     }
   }
 
-  ///Helper method that generates MediaStream from your device camera that will be automatically added to peer connection instance internally used by janus client
+  /// Initializes device media (camera, microphone, or display capture) and
+  /// wires the resulting stream into the plugin's peer connection.
   ///
-  /// [useDisplayMediaDevices] : It can be used to capture your device screen.<br>
-  /// [disableDevicePrediction] : Disable device prediction when video or audio is not specified or unknown.<br>
-  /// [mediaConstraints] : Using this map you can specify media contraits such as resolution and fps etc.<br>
-  /// [simulcastSendEncodings] : This list is used to specify encoding for simulcasting or (svc if room codec is vp9)<br>
-  /// [transceiverDirection] : It will be ignored if you don't specify [simulcastSendEncodings]
-  /// you can use this method to get the stream and show live preview of your camera to RTCVideoRendererView <br><br>
-  /// keep in mind this method exist to help in getting started with this library quickly,educational purposes or for basic functionalities, for custom use cases it is recommended to rely on your own implementation of this method using PeerConnection
+  /// The default behaviour predicts sensible audio/video constraints when
+  /// possible so callers can pass `null` for [mediaConstraints]. To take full
+  /// control provide a map compatible with `navigator.mediaDevices`.
+  ///
+  /// Parameter hints:
+  /// - [useDisplayMediaDevices]: set to `true` to capture the screen instead of
+  ///   camera input. Required for iOS/macOS screen share support.
+  /// - [disableDevicePrediction]: skip automatic audio/video constraint hints
+  ///   and rely solely on [mediaConstraints].
+  /// - [simulcastSendEncodings]/[transceiverDirection]: advanced knobs for
+  ///   unified-plan transceivers (e.g. simulcast in video rooms).
+  /// - [desktopCaptureContext]: mandatory when [useDisplayMediaDevices] is true
+  ///   on macOS, Windows, or Linux so the native dialog can be presented.
+  ///
+  /// Platform considerations:
+  /// - **Android / iOS:** camera capture works out of the box; screen capture
+  ///   requires OS-specific entitlements and typically sets
+  ///   [useDisplayMediaDevices] to `true`.
+  /// - **Desktop (macOS, Windows, Linux):** provide a valid
+  ///   [desktopCaptureContext] to surface `ScreenSelectDialog()` when capturing
+  ///   displays. Camera capture uses automatic device prediction when available.
+  /// - **Web:** screen capture is also supported; the browser prompts the user
+  ///   without requiring [desktopCaptureContext].
+  ///
+  /// ### Android
+  /// ```dart
+  /// Future<MediaStream?> initAndroidCamera(JanusPlugin plugin) {
+  ///   return plugin.initializeMediaDevices(
+  ///     mediaConstraints: {
+  ///       'audio': true,
+  ///       'video': {'facingMode': 'user'},
+  ///     },
+  ///   );
+  /// }
+  /// ```
+  ///
+  /// ### iOS
+  /// ```dart
+  /// Future<MediaStream?> initIosScreenShare(
+  ///   BuildContext context,
+  ///   JanusPlugin plugin,
+  /// ) {
+  ///   return plugin.initializeMediaDevices(
+  ///     useDisplayMediaDevices: true,
+  ///     mediaConstraints: {'audio': true, 'video': true},
+  ///     desktopCaptureContext: context, // ReplayKit prompt.
+  ///   );
+  /// }
+  /// ```
+  ///
+  /// ### Desktop (macOS / Windows / Linux)
+  /// ```dart
+  /// Future<MediaStream?> initDesktopScreenShare(
+  ///   BuildContext context,
+  ///   JanusPlugin plugin,
+  /// ) {
+  ///   return plugin.initializeMediaDevices(
+  ///     useDisplayMediaDevices: true,
+  ///     desktopCaptureContext: context,
+  ///   );
+  /// }
+  /// ```
   Future<MediaStream?> initializeMediaDevices({
     Map<String, dynamic>? mediaConstraints,
     bool useDisplayMediaDevices = false,
     bool disableDevicePrediction = false,
     TransceiverDirection? transceiverDirection = TransceiverDirection.SendOnly,
     List<RTCRtpEncoding>? simulcastSendEncodings,
+    BuildContext? desktopCaptureContext,
   }) async {
     await _disposeMediaStreams(ignoreRemote: true);
+    Map<String, dynamic>? constraintsCandidate = mediaConstraints != null ? Map<String, dynamic>.from(mediaConstraints) : null;
+
     if (!disableDevicePrediction) {
-      List<MediaDeviceInfo> videoDevices = await getVideoInputDevices();
-      List<MediaDeviceInfo> audioDevices = await getAudioInputDevices();
-      if (videoDevices.isEmpty &&
-          audioDevices.isEmpty &&
-          !useDisplayMediaDevices) {
-        throw Exception("No device found for media generation");
-      }
-      if (mediaConstraints == null) {
-        if (videoDevices.isEmpty && audioDevices.isNotEmpty) {
-          mediaConstraints = {"audio": true, "video": false};
-        } else if (videoDevices.length == 1 && audioDevices.isNotEmpty) {
-          mediaConstraints = {"audio": true, 'video': true};
-        } else {
-          mediaConstraints = {
-            "audio": audioDevices.length > 0,
-            'video': {
-              'deviceId': {'exact': videoDevices.first.deviceId},
-            },
-          };
+      if (!useDisplayMediaDevices) {
+        List<MediaDeviceInfo> videoDevices = await getVideoInputDevices();
+        List<MediaDeviceInfo> audioDevices = await getAudioInputDevices();
+        if (videoDevices.isEmpty && audioDevices.isEmpty) {
+          throw Exception("No device found for media generation");
         }
+        if (constraintsCandidate == null) {
+          if (videoDevices.isEmpty && audioDevices.isNotEmpty) {
+            constraintsCandidate = {"audio": true, "video": false};
+          } else if (videoDevices.length == 1 && audioDevices.isNotEmpty) {
+            constraintsCandidate = {"audio": true, 'video': true};
+          } else {
+            constraintsCandidate = {
+              "audio": audioDevices.isNotEmpty,
+              'video': {
+                'deviceId': {'exact': videoDevices.first.deviceId},
+              },
+            };
+          }
+        }
+      } else {
+        constraintsCandidate ??= {'audio': true, 'video': true};
       }
     } else {
-      if (mediaConstraints == null) {
+      if (constraintsCandidate == null) {
         throw Exception("No media constraints set");
       }
     }
-    _context._logger.fine(mediaConstraints);
+
+    final Map<String, dynamic> resolvedConstraints = Map<String, dynamic>.from(constraintsCandidate);
+    _context._logger.fine(resolvedConstraints);
     if (webRTCHandle != null) {
       if (useDisplayMediaDevices == true) {
-        webRTCHandle!.localStream =
-            await navigator.mediaDevices.getDisplayMedia(mediaConstraints);
+        final displayConstraints = Map<String, dynamic>.from(resolvedConstraints);
+        if (WebRTC.platformIsDesktop) {
+          if (desktopCaptureContext == null) {
+            throw ArgumentError('desktopCaptureContext is required when capturing display on desktop');
+          }
+          final source = await showDialog<DesktopCapturerSource>(
+            context: desktopCaptureContext,
+            builder: (context) => ScreenSelectDialog(),
+          );
+          if (source == null) {
+            _context._logger.fine('desktop screen capture cancelled by user');
+            return null;
+          }
+          final videoConstraints = Map<String, dynamic>.from((displayConstraints['video'] as Map<String, dynamic>?) ?? <String, dynamic>{});
+          videoConstraints['deviceId'] = {'exact': source.id};
+          final mandatoryConstraints = Map<String, dynamic>.from((videoConstraints['mandatory'] as Map<String, dynamic>?) ?? <String, dynamic>{});
+          mandatoryConstraints.putIfAbsent('frameRate', () => 30.0);
+          videoConstraints['mandatory'] = mandatoryConstraints;
+          displayConstraints['video'] = videoConstraints;
+          displayConstraints['audio'] ??= true;
+          try {
+            webRTCHandle!.localStream = await navigator.mediaDevices.getDisplayMedia(displayConstraints);
+          } catch (error) {
+            _context._logger.severe('Failed to capture desktop display media: $error');
+            rethrow;
+          }
+        } else {
+          webRTCHandle!.localStream = await navigator.mediaDevices.getDisplayMedia(displayConstraints);
+        }
       } else {
-        webRTCHandle!.localStream =
-            await navigator.mediaDevices.getUserMedia(mediaConstraints);
+        webRTCHandle!.localStream = await navigator.mediaDevices.getUserMedia(resolvedConstraints);
       }
       if (_context._isUnifiedPlan && !_context._usePlanB) {
         _context._logger.finest('using unified plan');
         webRTCHandle!.localStream!.getTracks().forEach((element) async {
           if (simulcastSendEncodings == null) {
-            await webRTCHandle!.peerConnection!
-                .addTrack(element, webRTCHandle!.localStream!);
+            await webRTCHandle!.peerConnection!.addTrack(element, webRTCHandle!.localStream!);
             return;
           }
           await webRTCHandle!.peerConnection!.addTransceiver(
               track: element,
-              kind: element.kind == 'audio'
-                  ? RTCRtpMediaType.RTCRtpMediaTypeAudio
-                  : RTCRtpMediaType.RTCRtpMediaTypeVideo,
+              kind: element.kind == 'audio' ? RTCRtpMediaType.RTCRtpMediaTypeAudio : RTCRtpMediaType.RTCRtpMediaTypeVideo,
               init: RTCRtpTransceiverInit(
-                  streams: [webRTCHandle!.localStream!],
-                  direction: transceiverDirection,
-                  sendEncodings:
-                      element.kind == 'video' ? simulcastSendEncodings : null));
+                  streams: [webRTCHandle!.localStream!], direction: transceiverDirection, sendEncodings: element.kind == 'video' ? simulcastSendEncodings : null));
         });
       } else {
         _localStreamController!.sink.add(webRTCHandle!.localStream);
-        await webRTCHandle!.peerConnection!
-            .addStream(webRTCHandle!.localStream!);
+        await webRTCHandle!.peerConnection!.addStream(webRTCHandle!.localStream!);
       }
       return webRTCHandle!.localStream;
     } else {
@@ -620,21 +655,20 @@ class JanusPlugin {
     }
   }
 
+  /// Returns all available video input devices from the underlying platform.
   Future<List<MediaDeviceInfo>> getVideoInputDevices() async {
-    return (await navigator.mediaDevices.enumerateDevices())
-        .where((element) => element.kind == 'videoinput')
-        .toList();
+    return (await navigator.mediaDevices.enumerateDevices()).where((element) => element.kind == 'videoinput').toList();
   }
 
+  /// Returns all available audio input devices from the underlying platform.
   Future<List<MediaDeviceInfo>> getAudioInputDevices() async {
-    return (await navigator.mediaDevices.enumerateDevices())
-        .where((element) => element.kind == 'audioinput')
-        .toList();
+    return (await navigator.mediaDevices.enumerateDevices()).where((element) => element.kind == 'audioinput').toList();
   }
 
-  /// a utility method which can be used to switch camera of user device if it has more than one camera
-  /// [deviceId] : device id of the camera you want to switch to
-  /// [deviceId] is important for switchCamera to work in browsers.
+  /// Switches the active camera track to the one referenced by [deviceId].
+  ///
+  /// When [deviceId] is omitted on web, the helper defaults to the last device
+  /// returned by [getVideoInputDevices], which is often the rear-facing camera.
   Future<bool> switchCamera({String? deviceId}) async {
     List<MediaDeviceInfo> videoDevices = await getVideoInputDevices();
     if (videoDevices.isEmpty) {
@@ -642,8 +676,7 @@ class JanusPlugin {
     }
     if (kIsWeb) {
       if (deviceId == null) {
-        _context._logger.finest(
-            'deviceId not provided,hence switching to default last deviceId should be of back camera ideally');
+        _context._logger.finest('deviceId not provided,hence switching to default last deviceId should be of back camera ideally');
         deviceId = videoDevices.last.deviceId;
       }
       await _disposeMediaStreams(ignoreRemote: true);
@@ -653,8 +686,7 @@ class JanusPlugin {
         },
         'audio': true,
       });
-      List<RTCRtpSender> senders =
-          (await webRTCHandle!.peerConnection!.getSenders());
+      List<RTCRtpSender> senders = (await webRTCHandle!.peerConnection!.getSenders());
       webRTCHandle!.localStream?.getTracks().forEach((element) async {
         senders.forEach((sender) async {
           if (sender.track?.kind == element.kind) {
@@ -665,50 +697,42 @@ class JanusPlugin {
       return true;
     } else {
       if (webRTCHandle?.localStream != null) {
-        _context._logger.finest(
-            'using helper to switch camera, only works in android and ios');
-        return Helper.switchCamera(
-            webRTCHandle!.localStream!.getVideoTracks().first);
+        _context._logger.finest('using helper to switch camera, only works in android and ios');
+        return Helper.switchCamera(webRTCHandle!.localStream!.getVideoTracks().first);
       }
       return false;
     }
   }
 
-  /// This method is used to create webrtc offer, sets local description on internal PeerConnection object
-  /// It supports both style of offer creation that is plan-b and unified.
-  Future<RTCSessionDescription> createOffer(
-      {bool audioRecv = true, bool videoRecv = true}) async {
+  /// Creates an SDP offer and sets it as the local description.
+  ///
+  /// Supports both Plan-B and Unified Plan flows based on the internal flags.
+  Future<RTCSessionDescription> createOffer({bool audioRecv = true, bool videoRecv = true}) async {
     dynamic offerOptions;
-    offerOptions = {
-      "offerToReceiveAudio": audioRecv,
-      "offerToReceiveVideo": videoRecv
-    };
-    RTCSessionDescription offer =
-        await webRTCHandle!.peerConnection!.createOffer(offerOptions ?? {});
+    offerOptions = {"offerToReceiveAudio": audioRecv, "offerToReceiveVideo": videoRecv};
+    RTCSessionDescription offer = await webRTCHandle!.peerConnection!.createOffer(offerOptions ?? {});
     await webRTCHandle!.peerConnection!.setLocalDescription(offer);
     return offer;
   }
 
-  /// This method is used to create webrtc answer, sets local description on internal PeerConnection object
-  /// It supports both style of answer creation that is plan-b and unified.
+  /// Creates an SDP answer and sets it as the local description.
   Future<RTCSessionDescription> createAnswer() async {
     try {
-      RTCSessionDescription answer =
-          await webRTCHandle!.peerConnection!.createAnswer();
+      RTCSessionDescription answer = await webRTCHandle!.peerConnection!.createAnswer();
       await webRTCHandle!.peerConnection!.setLocalDescription(answer);
       return answer;
     } catch (e) {
       //    handling kstable exception most ugly way but currently there's no other workaround, it just works
-      RTCSessionDescription answer =
-          await webRTCHandle!.peerConnection!.createAnswer();
+      RTCSessionDescription answer = await webRTCHandle!.peerConnection!.createAnswer();
       await webRTCHandle!.peerConnection!.setLocalDescription(answer);
       return answer;
     }
   }
 
-  /// Gets a verbose description of the currently received video stream bitrate
-  /// [mid] optional mid to specify the stream, first video stream if missing
-  /// Similar to janus.js getBitrate() function
+  /// Calculates the bitrate of the inbound video stream identified by [mid].
+  ///
+  /// When [mid] is omitted, statistics for the first video inbound RTP stream
+  /// are returned. Mirrors the behaviour of `Janus#getBitrate` in janus.js.
   Future<String?> getBitrate([String? mid]) async {
     if (webRTCHandle?.peerConnection == null) {
       return null;
@@ -725,9 +749,7 @@ class JanusPlugin {
 
       if (mid != null) {
         // Look for specific mid
-        if (report.values['mid'] == mid &&
-            report.type == 'inbound-rtp' &&
-            report.values['kind'] == 'video') {
+        if (report.values['mid'] == mid && report.type == 'inbound-rtp' && report.values['kind'] == 'video') {
           isTargetStream = true;
         }
       } else {
@@ -744,12 +766,9 @@ class JanusPlugin {
         final historyKey = mid ?? "default";
 
         // Calculate bitrate if we have previous values
-        if (_lastBytesReceivedMap[historyKey] != null &&
-            _lastTimestampMap[historyKey] != null) {
-          final bytesDiff =
-              currentBytesReceived - _lastBytesReceivedMap[historyKey]!;
-          final timeDiff =
-              (nowMillis - _lastTimestampMap[historyKey]!) / 1000.0;
+        if (_lastBytesReceivedMap[historyKey] != null && _lastTimestampMap[historyKey] != null) {
+          final bytesDiff = currentBytesReceived - _lastBytesReceivedMap[historyKey]!;
+          final timeDiff = (nowMillis - _lastTimestampMap[historyKey]!) / 1000.0;
 
           if (timeDiff > 0 && bytesDiff >= 0) {
             final bitsDiff = bytesDiff * 8;
@@ -770,29 +789,23 @@ class JanusPlugin {
     return result;
   }
 
-  /// Send text message on existing text room using data channel with same label as specified during initDataChannel() method call.
+  /// Sends a text [message] over the default data channel.
   ///
-  /// for now janus text room only supports text as string although with normal data channel api we can send blob or Uint8List if we want.
+  /// Ensure [initDataChannel] has been invoked and the channel is open before
+  /// calling this helper. Throws if the peer connection or channel is missing.
   Future<void> sendData(String message) async {
-    // if (message != null) {
     if (webRTCHandle!.peerConnection != null) {
-      this._context._logger.finest('before send RTCDataChannelMessage');
-      if (webRTCHandle!.dataChannel[_context._dataChannelDefaultLabel] ==
-          null) {
-        throw Exception(
-            "You Must  call initDataChannel method! before you can send any data channel message");
+      _context._logger.finest('before send RTCDataChannelMessage');
+      if (webRTCHandle!.dataChannel[_context._dataChannelDefaultLabel] == null) {
+        throw Exception("You Must  call initDataChannel method! before you can send any data channel message");
       }
-      RTCDataChannel dataChannel =
-          webRTCHandle!.dataChannel[_context._dataChannelDefaultLabel]!;
+      RTCDataChannel dataChannel = webRTCHandle!.dataChannel[_context._dataChannelDefaultLabel]!;
       if (dataChannel.state == RTCDataChannelState.RTCDataChannelOpen) {
-        return await dataChannel.send(RTCDataChannelMessage(message));
+        await dataChannel.send(RTCDataChannelMessage(message));
+        return;
       }
     } else {
-      throw Exception(
-          "You Must Initialize Peer Connection followed by initDataChannel()");
+      throw Exception("You Must Initialize Peer Connection followed by initDataChannel()");
     }
-    // } else {
-    //   throw Exception("message must be provided!");
-    // }
   }
 }

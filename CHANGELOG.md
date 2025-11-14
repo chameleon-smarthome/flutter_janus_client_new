@@ -1,3 +1,8 @@
+## 2.4.0
+- Desktop builds can now select display capture sources via `initializeMediaDevices`.
+- Expanded Dartdoc across core and wrapper plugins for clearer API guidance.
+- Added `sendCompleterTimeout` knob on WebSocket transport to tune Janus transaction timeouts.
+
 ## 2.3.15
 - Upgraded flutter_webrtc to version 1.2.0
 - Added support for H.265/HEVC video codec

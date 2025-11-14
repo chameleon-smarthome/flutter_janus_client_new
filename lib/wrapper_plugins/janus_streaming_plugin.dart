@@ -2,36 +2,21 @@ part of janus_client;
 
 class JanusStreamingPlugin extends JanusPlugin {
   JanusStreamingPlugin({handleId, context, transport, session})
-      : super(
-            context: context,
-            handleId: handleId,
-            plugin: JanusPlugins.STREAMING,
-            session: session,
-            transport: transport);
+      : super(context: context, handleId: handleId, plugin: JanusPlugins.STREAMING, session: session, transport: transport);
 
-  /// Get list of all streaming mount-point available on server
+  /// Returns the list of all streaming mount points available on the server.
   Future<List<StreamingMountPoint>> listStreams() async {
     var payload = {"request": "list"};
     var response = await this.send(data: payload);
-    if (response['janus'] == 'success' &&
-        response['plugindata'] != null &&
-        response['plugindata']['data'] != null &&
-        response['plugindata']['data']['list'] != null) {
-      return (response['plugindata']['data']['list'] as List<dynamic>)
-          .map((e) => StreamingMountPoint.fromJson(e))
-          .toList();
+    if (response['janus'] == 'success' && response['plugindata'] != null && response['plugindata']['data'] != null && response['plugindata']['data']['list'] != null) {
+      return (response['plugindata']['data']['list'] as List<dynamic>).map((e) => StreamingMountPoint.fromJson(e)).toList();
     }
     return [];
   }
 
-  /// Get verbose info of a specific mount-point
-  Future<StreamingMountPointInfo?> getStreamInfo(int id,
-      {String? secret}) async {
-    var payload = {
-      "request": "info",
-      "id": id,
-      if (secret != null) "secret": secret
-    };
+  /// Retrieves detailed information for the mount point with [id].
+  Future<StreamingMountPointInfo?> getStreamInfo(int id, {String? secret}) async {
+    var payload = {"request": "info", "id": id, if (secret != null) "secret": secret};
     var response = await this.send(data: payload);
     if (response['info'] != null) {
       return StreamingMountPointInfo.fromJson(response['info']);
@@ -39,16 +24,13 @@ class JanusStreamingPlugin extends JanusPlugin {
     return null;
   }
 
-  /// Create a new streaming Mount-point
-  /// type = rtp|live|ondemand|rtsp
-  ///        rtp = stream originated by an external tool (e.g., gstreamer or
-  ///              ffmpeg) and sent to the plugin via RTP
-  ///        live = local file streamed live to multiple viewers
-  ///               (multiple viewers = same streaming context)
-  ///        ondemand = local file streamed on-demand to a single listener
-  ///                   (multiple viewers = different streaming contexts)
-  ///        rtsp = stream originated by an external RTSP feed (only
-  ///               available if libcurl support was compiled)
+  /// Creates a new streaming mount point on the Janus server.
+  ///
+  /// [type] must be one of `rtp`, `live`, `ondemand`, or `rtsp`:
+  /// - `rtp`: External source pushes RTP (e.g. GStreamer, FFmpeg).
+  /// - `live`: Local file streamed live to multiple viewers.
+  /// - `ondemand`: Local file served on-demand per viewer.
+  /// - `rtsp`: External RTSP feed (requires libcurl support).
   Future<StreamingMount?> createStream(String type,
       {String? name,
       String? description,
@@ -81,15 +63,9 @@ class JanusStreamingPlugin extends JanusPlugin {
     return null;
   }
 
-  /// edit existing streaming mount-point
+  /// Updates metadata or access control for an existing mount point.
   Future<StreamingMountEdited?> editStream(int id,
-      {String? secret,
-      String? description,
-      String? metadata,
-      String? newSecret,
-      bool? newIsPrivate,
-      bool? permanent,
-      String? newPin}) async {
+      {String? secret, String? description, String? metadata, String? newSecret, bool? newIsPrivate, bool? permanent, String? newPin}) async {
     var payload = {
       "request": "edit",
       "id": id,
@@ -108,16 +84,9 @@ class JanusStreamingPlugin extends JanusPlugin {
     return null;
   }
 
-  /// destroy existing streaming mount-point
-  /// setting permanent true will delete from config files as well.
-  ///
+  /// Destroys the specified mount point, optionally removing it from config when [permanent] is `true`.
   Future<bool> destroyStream(int id, {String? secret, bool? permanent}) async {
-    var payload = {
-      "request": "destroy",
-      "id": id,
-      if (secret != null) "secret": secret,
-      if (permanent != null) "permanent": permanent
-    };
+    var payload = {"request": "destroy", "id": id, if (secret != null) "secret": secret, if (permanent != null) "permanent": permanent};
     var response = await this.send(data: payload);
     if (response['streaming'] == 'destroyed') {
       return true;
@@ -125,19 +94,19 @@ class JanusStreamingPlugin extends JanusPlugin {
     return false;
   }
 
+  /// Subscribes to the mount point identified by [id].
+  ///
+  /// Parameters:
+  /// - [media]: Media items to request (overrides legacy boolean flags).
+  /// - [pin]: Access pin when the mount point is protected.
+  /// - [offerAudio]/[offerVideo]/[offerData]: Legacy flags preserved for compatibility.
   Future<void> watchStream(
     int id, {
     List<CreateMediaItem>? media,
     String? pin,
-    @Deprecated(
-        'It is legacy option,you should use media for fine grade control')
-    bool? offerAudio,
-    @Deprecated(
-        'It is legacy option,you should use media for fine grade control')
-    bool? offerVideo,
-    @Deprecated(
-        'It is legacy option,you should use media for fine grade control')
-    bool? offerData,
+    @Deprecated('It is legacy option,you should use media for fine grade control') bool? offerAudio,
+    @Deprecated('It is legacy option,you should use media for fine grade control') bool? offerVideo,
+    @Deprecated('It is legacy option,you should use media for fine grade control') bool? offerData,
   }) async {
     var payload = {
       "request": "watch",
@@ -151,10 +120,9 @@ class JanusStreamingPlugin extends JanusPlugin {
     await this.send(data: payload);
   }
 
-  /// call this method once watch request is successfully completed
+  /// Starts playback after a successful [watchStream] negotiation.
   Future<void> startStream() async {
-    if (webRTCHandle?.peerConnection?.iceConnectionState ==
-        RTCIceConnectionState.RTCIceConnectionStateConnected) {
+    if (webRTCHandle?.peerConnection?.iceConnectionState == RTCIceConnectionState.RTCIceConnectionStateConnected) {
       await send(data: {"request": "start"});
     } else {
       RTCSessionDescription answer = await createAnswer();
@@ -162,23 +130,24 @@ class JanusStreamingPlugin extends JanusPlugin {
     }
   }
 
-  /// temporarily stop media delivery
+  /// Temporarily pauses media delivery while keeping the session alive.
   Future<void> pauseStream() async {
     await send(data: {"request": "pause"});
   }
 
-  /// stop the media flow entirely
+  /// Stops the media flow and tears down the streaming session.
   Future<void> stopStream() async {
     await send(data: {"request": "stop"});
   }
 
-  /// switch to different streaming mount point
+  /// Switches the current subscription to another mount point.
   Future<void> switchStream(int id) async {
     await send(data: {"request": "switch", "id": id});
   }
 
   bool _onCreated = false;
 
+  /// Registers typed event helpers for streaming-specific events.
   @override
   void onCreate() {
     super.onCreate();
@@ -187,22 +156,16 @@ class JanusStreamingPlugin extends JanusPlugin {
     }
     _onCreated = true;
     messages?.listen((event) {
-      TypedEvent<JanusEvent> typedEvent = TypedEvent<JanusEvent>(
-          event: JanusEvent.fromJson(event.event), jsep: event.jsep);
+      TypedEvent<JanusEvent> typedEvent = TypedEvent<JanusEvent>(event: JanusEvent.fromJson(event.event), jsep: event.jsep);
       var data = typedEvent.event.plugindata?.data;
       if (data == null) return;
-      if (data["streaming"] == "event" &&
-          data["result"] != null &&
-          data["result"]['status'] == 'preparing') {
+      if (data["streaming"] == "event" && data["result"] != null && data["result"]['status'] == 'preparing') {
         typedEvent.event.plugindata?.data = StreamingPluginPreparingEvent();
         _typedMessagesSink?.add(typedEvent);
-      } else if (data["streaming"] == "event" &&
-          data["result"] != null &&
-          data["result"]['status'] == 'stopping') {
+      } else if (data["streaming"] == "event" && data["result"] != null && data["result"]['status'] == 'stopping') {
         typedEvent.event.plugindata?.data = StreamingPluginStoppingEvent();
         _typedMessagesSink?.add(typedEvent);
-      } else if (data['streaming'] == 'event' &&
-          (data['error_code'] != null || data['result']?['code'] != null)) {
+      } else if (data['streaming'] == 'event' && (data['error_code'] != null || data['result']?['code'] != null)) {
         _typedMessagesSink?.addError(JanusError.fromMap(data));
       }
     });

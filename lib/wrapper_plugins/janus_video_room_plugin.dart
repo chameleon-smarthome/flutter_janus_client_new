@@ -1,7 +1,9 @@
 part of janus_client;
 
+/// Quality tiers used when switching among simulcast layers.
 enum ConfigureStreamQuality { LOW, MEDIUM, HIGH }
 
+/// Represents a single remote simulcast layer configuration request.
 class ConfigureStream {
   String? mid;
   bool? send;
@@ -29,6 +31,7 @@ class ConfigureStream {
     this.max_delay,
   });
 
+  /// Converts this configuration into the Janus wire-format map, omitting nulls.
   Map<String, dynamic> toMap() {
     return {
       'mid': mid,
@@ -45,21 +48,14 @@ class ConfigureStream {
     }..removeWhere((key, value) => value == null);
   }
 
+  /// Builds a [ConfigureStream] from a Janus plugindata map.
   factory ConfigureStream.fromMap(Map<String, dynamic> map) {
     return ConfigureStream(
       mid: map['mid'],
-      substream: map['substream'] != null
-          ? ConfigureStreamQuality.values[map['substream']]
-          : null,
-      temporal: map['temporal'] != null
-          ? ConfigureStreamQuality.values[map['temporal']]
-          : null,
-      spatial_layer: map['spatial_layer'] != null
-          ? ConfigureStreamQuality.values[map['spatial_layer']]
-          : null,
-      temporal_layer: map['temporal_layer'] != null
-          ? ConfigureStreamQuality.values[map['temporal_layer']]
-          : null,
+      substream: map['substream'] != null ? ConfigureStreamQuality.values[map['substream']] : null,
+      temporal: map['temporal'] != null ? ConfigureStreamQuality.values[map['temporal']] : null,
+      spatial_layer: map['spatial_layer'] != null ? ConfigureStreamQuality.values[map['spatial_layer']] : null,
+      temporal_layer: map['temporal_layer'] != null ? ConfigureStreamQuality.values[map['temporal_layer']] : null,
       send: map['send'],
       fallback: map['fallback']?.toInt(),
       audio_level_average: map['audio_level_average']?.toInt(),
@@ -69,10 +65,11 @@ class ConfigureStream {
     );
   }
 
+  /// Serialises this configuration to JSON for storage/debugging.
   String toJson() => json.encode(toMap());
 
-  factory ConfigureStream.fromJson(String source) =>
-      ConfigureStream.fromMap(json.decode(source));
+  /// Parses a configuration instance from JSON.
+  factory ConfigureStream.fromJson(String source) => ConfigureStream.fromMap(json.decode(source));
 
   @override
   String toString() {
@@ -85,18 +82,14 @@ class ConfigureStream {
   }
 }
 
+/// Wrapper around the Janus VideoRoom plugin with typed helpers.
 class JanusVideoRoomPlugin extends JanusPlugin {
   JanusVideoRoomPlugin({handleId, context, transport, session})
-      : super(
-            context: context,
-            handleId: handleId,
-            plugin: JanusPlugins.VIDEO_ROOM,
-            session: session,
-            transport: transport);
+      : super(context: context, handleId: handleId, plugin: JanusPlugins.VIDEO_ROOM, session: session, transport: transport);
 
-  ///  This allows you to modify the room description, secret, pin and whether it's private or not:
-  ///  you won't be able to modify other more static properties, like the room ID, the sampling rate,
-  ///  the extensions-related stuff and so on
+  /// Updates mutable room properties such as description, pin, or publisher caps.
+  ///
+  /// Pass any field that needs to change; absent values remain untouched on Janus.
   Future<dynamic> editRoom(dynamic roomId,
       {String? secret,
       String? newDescription,
@@ -130,35 +123,19 @@ class JanusVideoRoomPlugin extends JanusPlugin {
     return (await this.send(data: payload));
   }
 
-  /// Used to destroy an existing video room, whether created dynamically or statically
-  Future<dynamic> destroyRoom(dynamic roomId,
-      {String? secret, bool? permanent}) async {
-    var payload = {
-      "request": "destroy",
-      "room": roomId,
-      if (secret != null) "secret": secret,
-      if (permanent != null) "permanent": permanent
-    };
+  /// Permanently removes an existing room, optionally using the admin [secret].
+  Future<dynamic> destroyRoom(dynamic roomId, {String? secret, bool? permanent}) async {
+    var payload = {"request": "destroy", "room": roomId, if (secret != null) "secret": secret, if (permanent != null) "permanent": permanent};
     _handleRoomIdTypeDifference(payload);
     return (await this.send(data: payload));
   }
 
-  ///  Used to create a new video room
+  /// Creates a new room with the provided identifier and metadata.
+  ///
+  /// Set [permanent] to `true` to persist the room across Janus restarts.
   Future<dynamic> createRoom(dynamic roomId,
-      {bool permanent = false,
-      String? pin,
-      Map<String, dynamic>? extras,
-      List<String>? allowed,
-      String? isPrivate,
-      String description = '',
-      String? secret}) async {
-    var payload = {
-      "request": "create",
-      "room": roomId,
-      "permanent": permanent,
-      "description": description,
-      ...?extras
-    };
+      {bool permanent = false, String? pin, Map<String, dynamic>? extras, List<String>? allowed, String? isPrivate, String description = '', String? secret}) async {
+    var payload = {"request": "create", "room": roomId, "permanent": permanent, "description": description, ...?extras};
     if (allowed != null) payload["allowed"] = allowed;
     if (isPrivate != null) payload["is_private"] = isPrivate;
     if (secret != null) payload['secret'] = secret;
@@ -167,21 +144,17 @@ class JanusVideoRoomPlugin extends JanusPlugin {
     return (await this.send(data: payload));
   }
 
-  /// get list of participants in a existing video room
-  Future<VideoRoomListParticipantsResponse?> getRoomParticipants(
-      dynamic roomId) async {
+  /// Fetches the active publishers currently joined to [roomId].
+  Future<VideoRoomListParticipantsResponse?> getRoomParticipants(dynamic roomId) async {
     var payload = {"request": "listparticipants", "room": roomId};
     Map data = await this.send(data: payload);
     _handleRoomIdTypeDifference(payload);
-    return _getPluginDataFromPayload<VideoRoomListParticipantsResponse>(
-        data, VideoRoomListParticipantsResponse.fromJson);
+    return _getPluginDataFromPayload<VideoRoomListParticipantsResponse>(data, VideoRoomListParticipantsResponse.fromJson);
   }
 
   // prevent duplication
   T? _getPluginDataFromPayload<T>(dynamic data, T Function(dynamic) fromJson) {
-    if (data.containsKey('janus') &&
-        data['janus'] == 'success' &&
-        data.containsKey('plugindata')) {
+    if (data.containsKey('janus') && data['janus'] == 'success' && data.containsKey('plugindata')) {
       var dat = data['plugindata']['data'];
       return fromJson(dat);
     } else {
@@ -189,17 +162,17 @@ class JanusVideoRoomPlugin extends JanusPlugin {
     }
   }
 
-  /// get list of all rooms
+  /// Lists rooms exposed by the Janus instance, including static ones.
   Future<VideoRoomListResponse?> getRooms() async {
     var payload = {"request": "list"};
     Map data = await this.send(data: payload);
-    return _getPluginDataFromPayload<VideoRoomListResponse>(
-        data, VideoRoomListResponse.fromJson);
+    return _getPluginDataFromPayload<VideoRoomListResponse>(data, VideoRoomListResponse.fromJson);
   }
 
-  /// joins the [JanusVideoRoom] as a media publisher on provided [roomId] with its name as [displayName] and optionally can provide your own [id].
-  Future<void> joinPublisher(dynamic roomId,
-      {String? pin, int? id, String? token, String? displayName}) async {
+  /// Joins [roomId] as a publisher, advertising [displayName] to other participants.
+  ///
+  /// Provide [pin] or [token] if the room requires authentication.
+  Future<void> joinPublisher(dynamic roomId, {String? pin, int? id, String? token, String? displayName}) async {
     var payload = {
       "request": "join",
       "ptype": "publisher",
@@ -213,22 +186,16 @@ class JanusVideoRoomPlugin extends JanusPlugin {
     await this.send(data: payload);
   }
 
-  Future<void> subscribeToStreams(List<PublisherStream> streams,
-      {RTCSessionDescription? offer}) async {
+  /// Subscribes to the listed publisher [streams], optionally sending a custom offer.
+  Future<void> subscribeToStreams(List<PublisherStream> streams, {RTCSessionDescription? offer}) async {
     if (streams.length > 0) {
-      var payload = {
-        'request': "subscribe",
-        'streams': streams
-            .map((e) => e.toMap()..removeWhere((key, value) => value == null))
-            .toList()
-      };
+      var payload = {'request': "subscribe", 'streams': streams.map((e) => e.toMap()..removeWhere((key, value) => value == null)).toList()};
       await this.send(data: payload, jsep: offer);
     }
   }
 
-  Future<void> update(
-      {List<SubscriberUpdateStream>? subscribe,
-      List<SubscriberUpdateStream>? unsubscribe}) async {
+  /// Dynamically adds or removes simulcast streams on an existing subscription.
+  Future<void> update({List<SubscriberUpdateStream>? subscribe, List<SubscriberUpdateStream>? unsubscribe}) async {
     if (subscribe?.isEmpty == true && unsubscribe?.isEmpty == true) {
       return;
     }
@@ -236,18 +203,15 @@ class JanusVideoRoomPlugin extends JanusPlugin {
       'request': "update",
     };
     if (subscribe?.isNotEmpty == true) {
-      payload['subscribe'] = subscribe
-          ?.map((e) => e.toMap()..removeWhere((key, value) => value == null))
-          .toList();
+      payload['subscribe'] = subscribe?.map((e) => e.toMap()..removeWhere((key, value) => value == null)).toList();
     }
     if (unsubscribe?.isNotEmpty == true) {
-      payload['unsubscribe'] = unsubscribe
-          ?.map((e) => e.toMap()..removeWhere((key, value) => value == null))
-          .toList();
+      payload['unsubscribe'] = unsubscribe?.map((e) => e.toMap()..removeWhere((key, value) => value == null)).toList();
     }
     await this.send(data: payload);
   }
 
+  /// Acknowledges the attach as a subscriber and starts receiving media.
   Future<void> start(dynamic roomId, {RTCSessionDescription? answer}) async {
     var payload = {"request": "start", 'room': roomId};
     if (answer == null) {
@@ -256,7 +220,9 @@ class JanusVideoRoomPlugin extends JanusPlugin {
     await this.send(data: payload, jsep: answer);
   }
 
-  /// joins the [JanusVideoRoom] as a media publisher on provided [roomId] with its name as [displayName] and optionally can provide your own [id].
+  /// Joins [roomId] as a subscriber against [feedId] and requested [streams].
+  ///
+  /// Use [privateId] returned from `joinPublisher` to correlate events in SFU cascading setups.
   Future<dynamic> joinSubscriber(
     dynamic roomId, {
     List<PublisherStream>? streams,
@@ -273,15 +239,15 @@ class JanusVideoRoomPlugin extends JanusPlugin {
       "token": token,
       "feed": feedId,
       "private_id": privateId,
-      "streams": streams
-          ?.map((e) => e.toMap()..removeWhere((key, value) => value == null))
-          .toList(),
+      "streams": streams?.map((e) => e.toMap()..removeWhere((key, value) => value == null)).toList(),
     }..removeWhere((key, value) => value == null);
     _handleRoomIdTypeDifference(payload);
     await this.send(data: payload);
   }
 
-  /// sends the publish request to [JanusVideoRoom]. It should be called once [VideoRoomJoinedEvent] is received from server.
+  /// Publishes local media to existing subscribers, creating an offer when missing.
+  ///
+  /// Adjust [bitrate], [record], or [descriptions] to tweak the upstream settings.
   Future<void> publishMedia(
       {String? audioCodec,
       String? videCodec,
@@ -311,6 +277,7 @@ class JanusVideoRoomPlugin extends JanusPlugin {
     await this.send(data: payload, jsep: offer);
   }
 
+  /// Reconfigures an ongoing publisher session (bitrate, recording, layers, etc.).
   Future<void> configure(
       {int? bitrate,
       bool? keyframe,
@@ -339,22 +306,19 @@ class JanusVideoRoomPlugin extends JanusPlugin {
     await this.send(data: payload, jsep: sessionDescription);
   }
 
+  /// Stops receiving the specified [streams] while remaining attached.
   Future<void> unsubscribe({List<UnsubscribeStreams>? streams}) async {
-    var payload = {
-      "request": "unsubscribe",
-      "streams": streams
-          ?.map((e) => e.toMap()..removeWhere((key, value) => value == null))
-          .toList()
-    }..removeWhere((key, value) => value == null);
+    var payload = {"request": "unsubscribe", "streams": streams?.map((e) => e.toMap()..removeWhere((key, value) => value == null)).toList()}
+      ..removeWhere((key, value) => value == null);
     await this.send(data: payload);
   }
 
-  /// sends unpublish request on current active [JanusVideoRoomPlugin] to tear off active PeerConnection in-effect leaving the room.
+  /// Requests Janus to tear down the current publisher PeerConnection.
   Future<void> unpublish() async {
     await this.send(data: {"request": "unpublish"});
   }
 
-  /// sends hangup request on current active [JanusVideoRoomPlugin] to tear off active PeerConnection in-effect leaving the room.
+  /// Tears down the subscriber connection and sends a `leave` request.
   Future<void> hangup() async {
     await super.hangup();
     await this.send(data: {"request": "leave"});
@@ -362,6 +326,7 @@ class JanusVideoRoomPlugin extends JanusPlugin {
 
   bool _onCreated = false;
 
+  /// Converts raw plugindata payloads into typed video-room events.
   @override
   void onCreate() {
     if (_onCreated) {
@@ -369,42 +334,31 @@ class JanusVideoRoomPlugin extends JanusPlugin {
     }
     _onCreated = true;
     messages?.listen((event) {
-      TypedEvent<JanusEvent> typedEvent = TypedEvent<JanusEvent>(
-          event: JanusEvent.fromJson(event.event), jsep: event.jsep);
+      TypedEvent<JanusEvent> typedEvent = TypedEvent<JanusEvent>(event: JanusEvent.fromJson(event.event), jsep: event.jsep);
       var data = typedEvent.event.plugindata?.data;
       if (data == null) return;
       if (data['videoroom'] == 'joined') {
         typedEvent.event.plugindata?.data = VideoRoomJoinedEvent.fromJson(data);
         _typedMessagesSink?.add(typedEvent);
-      } else if (data['videoroom'] == 'event' &&
-          data['unpublished'] != null &&
-          data['unpublished'] is int) {
-        typedEvent.event.plugindata?.data =
-            VideoRoomUnPublishedEvent.fromJson(data);
+      } else if (data['videoroom'] == 'event' && data['unpublished'] != null && data['unpublished'] is int) {
+        typedEvent.event.plugindata?.data = VideoRoomUnPublishedEvent.fromJson(data);
         _typedMessagesSink?.add(typedEvent);
       } else if (data['videoroom'] == 'updated' && data['streams'] != null) {
-        typedEvent.event.plugindata?.data =
-            VideoRoomUpdatedEvent.fromJson(data);
+        typedEvent.event.plugindata?.data = VideoRoomUpdatedEvent.fromJson(data);
         _typedMessagesSink?.add(typedEvent);
       } else if (data['videoroom'] == 'event' && data['configured'] == "ok") {
         typedEvent.event.plugindata?.data = VideoRoomConfigured.fromJson(data);
         _typedMessagesSink?.add(typedEvent);
       } else if (data['videoroom'] == 'event' && data['publishers'] != null) {
-        typedEvent.event.plugindata?.data =
-            VideoRoomNewPublisherEvent.fromJson(data);
+        typedEvent.event.plugindata?.data = VideoRoomNewPublisherEvent.fromJson(data);
         _typedMessagesSink?.add(typedEvent);
-      } else if (data['videoroom'] == 'event' &&
-          data['leaving'] != null &&
-          data['leaving'].runtimeType == int) {
-        typedEvent.event.plugindata?.data =
-            VideoRoomLeavingEvent.fromJson(data);
+      } else if (data['videoroom'] == 'event' && data['leaving'] != null && data['leaving'].runtimeType == int) {
+        typedEvent.event.plugindata?.data = VideoRoomLeavingEvent.fromJson(data);
         _typedMessagesSink?.add(typedEvent);
       } else if (data['videoroom'] == 'attached' || data['streams'] != null) {
-        typedEvent.event.plugindata?.data =
-            VideoRoomAttachedEvent.fromJson(data);
+        typedEvent.event.plugindata?.data = VideoRoomAttachedEvent.fromJson(data);
         _typedMessagesSink?.add(typedEvent);
-      } else if (data['videoroom'] == 'event' &&
-          (data['error_code'] != null || data['result']?['code'] != null)) {
+      } else if (data['videoroom'] == 'event' && (data['error_code'] != null || data['result']?['code'] != null)) {
         _typedMessagesSink?.addError(JanusError.fromMap(data));
       }
     });

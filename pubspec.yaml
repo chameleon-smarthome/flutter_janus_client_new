@@ -1,6 +1,6 @@
 name: janus_client
 description: A feature rich Janus Webrtc package
-version: 2.3.15
+version: 2.4.0
 homepage: https://github.com/shivanshtalwar0/flutter_janus_client
 
 environment:
@@ -10,7 +10,7 @@ environment:
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  dartdoc: 8.3.4
+  dartdoc: 9.0.0
 
 dependencies:
   flutter_web_plugins:
