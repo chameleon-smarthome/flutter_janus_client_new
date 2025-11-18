@@ -232,8 +232,7 @@ class JanusPlugin {
           response = (await rest.post(request, handleId: handleId)) as Map<String, dynamic>;
         } else if (_transport is WebSocketJanusTransport) {
           WebSocketJanusTransport ws = (_transport as WebSocketJanusTransport);
-          response = (await ws.send(request, handleId: handleId))
-              as Map<String, dynamic>;
+          response = (await ws.send(request, handleId: handleId)) as Map<String, dynamic>;
         } else if (_transport is MqttJanusTransport) {
           final mqtt = _transport as MqttJanusTransport;
           response = (await mqtt.send(request, handleId: handleId)) as Map<String, dynamic>;

@@ -248,7 +248,14 @@ class MqttJanusTransport extends JanusTransport {
   }
 
   @override
-  Future getInfo() async {
-    return parse((await http.get(Uri.parse(url! + "/info"))).body);
+  Future<dynamic> getInfo() {
+    if (!isConnected) {
+      connect();
+    }
+    Map<String, dynamic> payload = {};
+    String transaction = getUuid().v4();
+    payload['transaction'] = transaction;
+    payload['janus'] = 'info';
+    return send(payload);
   }
 }

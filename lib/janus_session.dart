@@ -53,7 +53,6 @@ class JanusSession {
         if (!mqtt.isConnected) {
           await mqtt.connect();
         }
-
         response = await mqtt.send(request);
         if (response!.containsKey('janus') && response.containsKey('data')) {
           _sessionId = response['data']['id'] as int?;
@@ -129,7 +128,7 @@ class JanusSession {
           context: _context,
           handleId: handleId,
           session: this);
-    } else if (package != null) {
+    }  else if (package != null) {
       plugin = JanusPlugin(
           transport: _transport!,
           context: _context,
@@ -246,10 +245,16 @@ class JanusSession {
               await mqtt.connect();
             }
             _context._logger.fine("keepalive request send to mqtt");
-            response = await mqtt.send({"janus": "keepalive", "session_id": sessionId, "transaction": transaction, ..._context._apiMap, ..._context._tokenMap});
+            response = await mqtt.send({
+              "janus": "keepalive",
+              "session_id": sessionId,
+              "transaction": transaction,
+              ..._context._apiMap,
+              ..._context._tokenMap
+            });
             _context._logger.fine(response);
           }
-        } catch (e) {
+        }  catch (e) {
           timer.cancel();
         }
       });
