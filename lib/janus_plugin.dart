@@ -18,6 +18,8 @@ class JanusPlugin {
   late JanusSession? _session;
   String? plugin;
   bool _initialized = false;
+  List<RTCIceCandidate> _queuedCandidates = [];
+  bool _remoteDescriptionSet = false;
 
   // internal method which takes care of type of roomId which is normally int but can be string if set in janus config for room
   _handleRoomIdTypeDifference(dynamic payload) {
@@ -270,7 +272,11 @@ class JanusPlugin {
     if (isTrickleEvent) {
       final candidateMap = event['candidate'];
       RTCIceCandidate candidate = RTCIceCandidate(candidateMap['candidate'], candidateMap['sdpMid'], candidateMap['sdpMLineIndex']);
-      webRTCHandle!.peerConnection!.addCandidate(candidate);
+      if (_remoteDescriptionSet) {
+        webRTCHandle!.peerConnection!.addCandidate(candidate);
+      } else {
+        _queuedCandidates.add(candidate);
+      }
     }
   }
 
@@ -485,6 +491,12 @@ class JanusPlugin {
     // var state = webRTCHandle?.peerConnection?.signalingState;
     if (data != null) {
       await webRTCHandle?.peerConnection?.setRemoteDescription(data);
+      _remoteDescriptionSet = true;
+
+      for (var c in _queuedCandidates) {
+        await webRTCHandle?.peerConnection?.addCandidate(c);
+      }
+      _queuedCandidates.clear();
     }
   }
 
