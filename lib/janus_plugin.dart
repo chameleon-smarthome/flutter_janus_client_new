@@ -271,7 +271,20 @@ class JanusPlugin {
     final isTrickleEvent = event['janus'] == 'trickle';
     if (isTrickleEvent) {
       final candidateMap = event['candidate'];
-      RTCIceCandidate candidate = RTCIceCandidate(candidateMap['candidate'], candidateMap['sdpMid'], candidateMap['sdpMLineIndex']);
+      if (candidateMap == null ||
+          candidateMap['candidate'] == null ||
+          candidateMap['sdpMid'] == null ||
+          candidateMap['sdpMLineIndex'] == null) {
+        print("Skipping invalid ICE candidate: $candidateMap");
+        return;
+      }
+
+      final candidate = RTCIceCandidate(
+        candidateMap['candidate'],
+        candidateMap['sdpMid'],
+        candidateMap['sdpMLineIndex'],
+      );
+
       if (_remoteDescriptionSet) {
         webRTCHandle!.peerConnection!.addCandidate(candidate);
       } else {
