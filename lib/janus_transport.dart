@@ -157,105 +157,145 @@ class MqttJanusTransport extends JanusTransport {
         super(url: url);
 
   final String publishTopic, subscribeTopic;
-
   final String? clientIdentifier;
 
-  bool get isConnected => _client.connectionStatus?.state == MqttConnectionState.connected;
+  bool get isConnected =>
+      _client.connectionStatus?.state == MqttConnectionState.connected;
 
   StreamSubscription? _subs;
+
   late final StreamController<Map<String, dynamic>> sink = () {
     final controller = StreamController<Map<String, dynamic>>();
-    _subs = (controller.stream.where((event) => isConnected)).listen((event) {
-      final data = JsonEncoder().convert(event);
-      final payload = MqttClientPayloadBuilder().addString(data).payload!;
-      _client.publishMessage(publishTopic, MqttQos.exactlyOnce, payload);
+
+    _subs = controller.stream.where((_) => isConnected).listen((event) {
+      try {
+        final builder = MqttClientPayloadBuilder()
+          ..addString(jsonEncode(event));
+
+        _client.publishMessage(
+          publishTopic,
+          MqttQos.exactlyOnce,
+          builder.payload!,
+        );
+      } catch (e) {
+        print("MQTT publish error: $e");
+      }
     });
+
     return controller;
   }();
 
-  Stream get stream => _client.updates!
-      .expand((element) => element)
-      .where((event) => event.topic == subscribeTopic)
-      .map((event) => event.payload)
-      .cast<MqttPublishMessage>()
-      .map((event) => event.payload.message)
-      .map(utf8.decode);
+  Stream<String> get stream =>
+      _client.updates!
+          .expand((e) => e)
+          .where((m) => m.topic == subscribeTopic)
+          .map((m) => m.payload)
+          .cast<MqttPublishMessage>()
+          .map((m) {
+        try {
+          return utf8.decode(m.payload.message);
+        } catch (_) {
+          return String.fromCharCodes(m.payload.message);
+        }
+      });
 
   late final MqttClient _client = () {
-    final uri = Uri.parse(this.url!);
-    final url = uri.scheme.startsWith('ws') ? '${uri.scheme}://${uri.host}' : uri.host;
-    final clientId = clientIdentifier ?? (uri.userInfo.isEmpty ? getUuid().v4() : uri.userInfo.split(':').first);
-    final client = MqttPlatformClient(url, clientId)
+    final uri = Uri.parse(url!);
+
+    final host = uri.scheme.startsWith('ws')
+        ? '${uri.scheme}://${uri.host}'
+        : uri.host;
+
+    final id = clientIdentifier ??
+        (uri.userInfo.isEmpty ? getUuid().v4() : uri.userInfo.split(':').first);
+
+    final client = MqttPlatformClient(host, id)
       ..port = uri.hasPort ? uri.port : 1883
       ..setProtocolV311()
       ..autoReconnect = true
       ..keepAlivePeriod = 4000
-      ..connectionMessage = MqttConnectMessage().withClientIdentifier(clientId).startClean()
+      ..connectionMessage = MqttConnectMessage()
+          .withClientIdentifier(id)
+          .startClean()
       ..onConnected = (() => print('Mqtt Server Connected'))
       ..onDisconnected = (() => print('Mqtt Server Disconected'))
       ..websocketProtocols = MqttClientConstants.protocolsSingleDefault;
+
     return client;
   }();
 
   Future<void> connect() async {
+    if (isConnected) return;
+
     try {
-      final uri = Uri.parse(this.url!);
+      final uri = Uri.parse(url!);
       final username = uri.userInfo.isEmpty ? null : uri.userInfo.split(':').first;
-      final password = !uri.userInfo.contains(':') ? null : uri.userInfo.split(':').last;
+      final password = uri.userInfo.contains(':')
+          ? uri.userInfo.split(':').last
+          : null;
+
       final status = await _client.connect(username, password);
+
       if (status?.state != MqttConnectionState.connected) {
-        throw Exception("The state is not connected: ${status?.state.name}:${status?.returnCode?.name}");
+        throw Exception(
+          "Not connected: ${status?.state.name}:${status?.returnCode?.name}",
+        );
       }
+
       _client.subscribe(subscribeTopic, MqttQos.exactlyOnce);
     } catch (e) {
-      print(e.toString());
-      print('something went wrong');
-      dispose();
+      print("MQTT connect error: $e");
+      await dispose();
       rethrow;
     }
   }
 
   Future<dynamic> send(Map<String, dynamic> data, {int? handleId}) async {
-    final String? transaction = data['transaction'];
+    final transaction = data['transaction'];
 
-    if (transaction?.isEmpty ?? true) {
+    if (transaction == null || transaction is! String || transaction.isEmpty) {
       throw "transaction key missing in body";
     }
 
-    if (sessionId != null) {
-      data['session_id'] = sessionId;
-    }
-
-    if (handleId != null) {
-      data['handle_id'] = handleId;
-    }
+    if (sessionId != null) data['session_id'] = sessionId;
+    if (handleId != null) data['handle_id'] = handleId;
 
     sink.add(data);
 
-    final result = await stream //
-        .map(parse)
-        .where((event) => event['transaction'] == transaction)
-        .timeout(Duration(seconds: 20))
-        .first;
+    try {
+      final result = await stream
+          .map(parse)
+          .where((event) => event['transaction'] == transaction)
+          .timeout(const Duration(seconds: 20))
+          .first;
 
-    return result;
+      return result;
+    } catch (e) {
+      throw "MQTT send timeout or error: $e";
+    }
   }
 
-  void dispose() async {
-    await _subs?.cancel();
-    await sink.close();
-    _client.disconnect();
+  Future<void> dispose() async {
+    try {
+      await _subs?.cancel();
+      await sink.close();
+    } catch (_) {}
+
+    try {
+      _client.disconnect();
+    } catch (_) {}
   }
 
   @override
-  Future<dynamic> getInfo() {
-    if (!isConnected) {
-      connect();
-    }
-    Map<String, dynamic> payload = {};
-    String transaction = getUuid().v4();
-    payload['transaction'] = transaction;
-    payload['janus'] = 'info';
-    return send(payload);
+  Future<dynamic> getInfo() async {
+    if (!isConnected) await connect();
+
+    final t = getUuid().v4();
+
+    return send({
+      "transaction": t,
+      "janus": "info",
+    });
   }
 }
+
