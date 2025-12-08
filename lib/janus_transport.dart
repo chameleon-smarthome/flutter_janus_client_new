@@ -68,80 +68,148 @@ class RestJanusTransport extends JanusTransport {
 /// inform the plugin that we need to use WebSockets as a transport mechanism for communicating with Janus Server.<br>
 /// sendCompleterTimeout is used to set timeout duration for each send request to Janus server resolving against transaction.
 class WebSocketJanusTransport extends JanusTransport {
-  WebSocketJanusTransport({String? url, this.sendCompleterTimeout = const Duration(seconds: 20)}) : super(url: url);
-  WebSocketChannel? channel;
+  WebSocketJanusTransport({
+    String? url,
+    this.sendCompleterTimeout = const Duration(seconds: 20),
+    this.autoReconnect = true,
+    this.heartbeatInterval = const Duration(seconds: 10),
+    this.maxMessageMissedRetries = 3,
+    this.maxReconnectAttempts = 5,
+  }) : super(url: url);
 
-  /// Controls how long a transaction waits for a Janus response before timing out.
-  Duration sendCompleterTimeout;
+  WebSocketChannel? channel;
   WebSocketSink? sink;
   late Stream stream;
   bool isConnected = false;
-  final Map<String, Completer<dynamic>> _pendingTransactions = {};
 
+  Duration sendCompleterTimeout;
+  bool autoReconnect;
+  Duration heartbeatInterval;
+  int maxReconnectAttempts;
+  int maxMessageMissedRetries;
+
+  final Map<String, Completer<dynamic>> _pendingTransactions = {};
+  Timer? _heartbeatTimer;
+  int _reconnectAttempts = 0;
+
+  /// Dispose WebSocket connection
+  @override
   void dispose() {
-    if (channel != null && sink != null) {
-      sink?.close();
-      isConnected = false;
+    _heartbeatTimer?.cancel();
+    sink?.close();
+    channel = null;
+    isConnected = false;
+  }
+
+  /// Establish WebSocket connection
+  void connect() {
+    try {
+      channel = WebSocketChannel.connect(
+        Uri.parse(url!),
+        protocols: ['janus-protocol'],
+      );
+
+      sink = channel!.sink;
+      stream = channel!.stream.asBroadcastStream();
+      isConnected = true;
+      _reconnectAttempts = 0;
+
+      // Start heartbeat
+      _startHeartbeat();
+
+      // Listen to incoming messages
+      stream.listen(
+        (event) {
+          final msg = parse(event);
+          final transaction = msg['transaction'];
+          if (transaction != null && _pendingTransactions.containsKey(transaction)) {
+            _pendingTransactions[transaction]!.complete(msg);
+            _pendingTransactions.remove(transaction);
+          }
+        },
+        onDone: _handleDisconnect,
+        onError: (_) => _handleDisconnect(),
+      );
+    } catch (e) {
+      print('WebSocket connect failed: $e');
+      _handleDisconnect();
     }
   }
 
-  /// this method is used to send json payload to Janus Server for communicating the intent.
-  Future<dynamic> send(Map<String, dynamic> data, {int? handleId}) {
-    final transaction = data['transaction'];
-
-    if (transaction == null) {
-      throw Exception("transaction key missing in body");
-    }
-
-    data['session_id'] = sessionId;
-    if (handleId != null) {
-      data['handle_id'] = handleId;
-    }
-
-    final completer = Completer<dynamic>();
-    _pendingTransactions[transaction] = completer;
-
-    sink!.add(stringify(data));
-
-    return completer.future.timeout(this.sendCompleterTimeout, onTimeout: () {
-      _pendingTransactions.remove(transaction);
-      throw TimeoutException('Timed out waiting for transaction $transaction');
+  /// Heartbeat to keep connection alive
+  void _startHeartbeat() {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = Timer.periodic(heartbeatInterval, (_) {
+      if (isConnected) {
+        final ping = {
+          'janus': 'ping',
+          'transaction': getUuid().v4(),
+        };
+        sink!.add(stringify(ping));
+      }
     });
+  }
+
+  /// Handle disconnect and auto-reconnect
+  void _handleDisconnect() async {
+    isConnected = false;
+    sink = null;
+    channel = null;
+    _heartbeatTimer?.cancel();
+
+    if (autoReconnect && _reconnectAttempts < maxReconnectAttempts) {
+      _reconnectAttempts++;
+      final delay = Duration(seconds: 2 * _reconnectAttempts); // exponential backoff
+      print('Reconnecting in ${delay.inSeconds}s...');
+      await Future.delayed(delay);
+      connect();
+    } else if (_reconnectAttempts >= maxReconnectAttempts) {
+      print('Max reconnect attempts reached.');
+    }
+  }
+
+  /// Send JSON to Janus safely with 3 retries
+  Future<dynamic> send(Map<String, dynamic> data, {int? handleId}) async {
+    if (!isConnected || sink == null) {
+      throw StateError("WebSocket is not connected");
+    }
+
+    final original = Map<String, dynamic>.from(data);
+
+    for (int attempt = 1; attempt <= maxMessageMissedRetries; attempt++) {
+      final Map<String, dynamic> payload = Map<String, dynamic>.from(original);
+      final String transaction = getUuid().v4();
+      payload['transaction'] = transaction;
+      payload['session_id'] = sessionId;
+      if (handleId != null) payload['handle_id'] = handleId;
+
+      final completer = Completer<dynamic>();
+      _pendingTransactions[transaction] = completer;
+
+      sink!.add(stringify(payload));
+
+      try {
+        final response = await completer.future.timeout(sendCompleterTimeout);
+        _pendingTransactions.remove(transaction);
+        return response;
+      } on TimeoutException {
+        _pendingTransactions.remove(transaction);
+        if (attempt == maxMessageMissedRetries) {
+          throw TimeoutException("Janus transaction timed out after $maxMessageMissedRetries attempts");
+        }
+      }
+    }
+
+    throw TimeoutException("Unexpected send() failure");
   }
 
   @override
   Future<dynamic> getInfo() async {
-    if (!isConnected) {
-      connect();
-    }
-    Map<String, dynamic> payload = {};
-    String transaction = getUuid().v4();
-    payload['transaction'] = transaction;
-    payload['janus'] = 'info';
+    if (!isConnected) connect();
+    final payload = {
+      'janus': 'info',
+    };
     return send(payload);
-  }
-
-  /// this method is internally called by plugin to establish connection with provided websocket uri.
-  void connect() {
-    try {
-      isConnected = true;
-      channel = WebSocketChannel.connect(Uri.parse(url!), protocols: ['janus-protocol']);
-    } catch (e) {
-      print(e.toString());
-      print('something went wrong');
-      isConnected = false;
-      dispose();
-    }
-    sink = channel!.sink;
-    stream = channel!.stream.asBroadcastStream();
-    stream.listen((event) {
-      final msg = parse(event);
-      final transaction = msg['transaction'];
-      if (transaction != null && _pendingTransactions.containsKey(transaction)) {
-        _pendingTransactions[transaction]!.complete(msg);
-        _pendingTransactions.remove(transaction);
-      }
-    });
   }
 }
 

@@ -1,3 +1,6 @@
+## 2.4.1
+- add maxMessageMissedRetries parameter to WebSocketTransport to configure number of retries for handling missed messages
+
 ## 2.4.0
 - Desktop builds can now select display capture sources via `initializeMediaDevices`.
 - Expanded Dartdoc across core and wrapper plugins for clearer API guidance.
