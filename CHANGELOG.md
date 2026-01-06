@@ -1,64 +1,103 @@
+## 2.4.2
+
+- Introduced `JanusStreamStats` with customizable bitrate and network quality helpers (inbound and outbound).
+- Added `getNetworkQuality`/`watchNetworkQuality` APIs plus richer Dartdoc covering the new stats surface.
+- Enhanced `typed_examples/google_meet.dart` with live bitrate overlays and signal icons powered by the new stats utilities.
+
 ## 2.4.1
+
 - add maxMessageMissedRetries parameter to WebSocketTransport to configure number of retries for handling missed messages
 
 ## 2.4.0
+
 - Desktop builds can now select display capture sources via `initializeMediaDevices`.
 - Expanded Dartdoc across core and wrapper plugins for clearer API guidance.
 - Added `sendCompleterTimeout` knob on WebSocket transport to tune Janus transaction timeouts.
 
 ## 2.3.15
+
 - Upgraded flutter_webrtc to version 1.2.0
 - Added support for H.265/HEVC video codec
+
 ## 2.3.14
+
 - Added `getBitrate()` method for real-time bitrate monitoring (similar to janus.js getBitrate function)
 - Support for bitrate monitoring with and without mid parameter
 - Independent bitrate history tracking per stream
+
 ## 2.3.13
+
 - downgrade to flutter_webrtc to version: 0.14.2 since 1.0.0 has issues with android seemingly unstable see [crashing on android](https://github.com/flutter-webrtc/flutter-webrtc/issues/1906)
+
 ## 2.3.12
+
 - upgrade flutter_webrtc to version: 1.0.0
 
 ## 2.3.11
+
 - feature: media constraints changes
+
 ## 2.3.10
+
 - bugfix: change type of id to dynamic instead of int to support string ids
 - update:url for org
 
 ## 2.3.9
+
 - bugfix: websocket session send refactored to use Completer instead of error prone firstWhere
 
 ## 2.3.8
+
 - bugfix: Data isn't serialized [#178](https://github.com/flutterjanus/flutter_janus_client/pull/178)
 
 ## 2.3.7
+
 - flutter_webrtc upgraded to version: 0.14.0
 - better logs and bugfixes on safely disposing webrtc stack
+
 ## 2.3.6
+
 - flutter_webrtc upgraded to version: 0.13.0
 - refactor method `stopAllTracksAndDispose` to `stopAllTracks`
+
 ## 2.3.5
+
 - bug fixes in RTCIceServer without crdentials [#164](https://github.com/flutterjanus/flutter_janus_client/pull/164)
 - flutter_webrtc upgraded to version: 0.10.6
+
 ## 2.3.4
+
 - bug fixes in sip and http_polling [#159](https://github.com/flutterjanus/flutter_janus_client/pull/159)
 - flutter_webrtc upgraded to version: ^0.9.48+hotfix.1
+
 ## 2.3.3
+
 - bug fixes (#151,#152,#153)
 - webrtc deps upgraded
+
 ## 2.3.2
+
 - flutter_webrtc=> 0.9.46
 - #145 make prebuffer as int
+
 ## 2.3.1
+
 - dependency upgrade and improvements
+
 ## 2.3.0
+
 - breaking changes in createOffer and createAnswer (removed dead code prepareTransReceiver)
 - fixed audio and video mute events not working due to #120 raised by @liemfs
 
 ## 2.2.15
+
 - added support for simulcasting in `initMediaDevice`
 - flutter webrtc 0.9.34
+
 ## 2.2.14
+
 - fix Searching transceivers returns wrong result [#120](https://github.com/flutterjanus/flutter_janus_client/pull/120)
+
 ## 2.2.13
 
 - support for custom logger
@@ -66,6 +105,7 @@
 ## 2.2.12
 
 - version downgrade for flutter_webrtc:0.9.22
+
 ## 2.2.11
 
 - version downgrade for flutter_webrtc:0.9.22
@@ -73,6 +113,7 @@
 ## 2.2.10
 
 - version bump for flutter_webrtc:0.9.24
+
 ## 2.2.9
 
 - type fix in AudioBridgeLeavingEvent (leaving)

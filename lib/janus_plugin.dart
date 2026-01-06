@@ -10,6 +10,477 @@ abstract class JanusPlugins {
   static const SIP = "janus.plugin.sip";
 }
 
+/// Describes which WebRTC statistics bucket should be inspected.
+///
+/// Use [inbound] for receivers (remote streams flowing in) and [outbound]
+/// for senders (local tracks you publish to Janus).
+enum RtpStreamDirection { inbound, outbound }
+
+/// Output unit that bitrates can be converted into when formatting results.
+enum BitrateUnit { bps, kbps, mbps, gbps }
+
+/// High-level network state derived from bitrate samples.
+enum NetworkQuality { excellent, good, poor, veryPoor }
+
+/// Explains how a [NetworkQualitySnapshot] was resolved.
+///
+/// * [measurement] – derived from a concrete bitrate delta.
+/// * [insufficientData] – waiting for the second sample to arrive.
+/// * [stale] – samples stopped arriving beyond the configured timeout.
+enum NetworkQualityReason { measurement, insufficientData, stale }
+
+/// Signature for functions that turn a [BitrateMeasurement] into display text.
+typedef BitrateFormatter = String Function(BitrateMeasurement measurement);
+
+extension _RtpStreamDirectionExt on RtpStreamDirection {
+  String get statsType {
+    switch (this) {
+      case RtpStreamDirection.inbound:
+        return 'inbound-rtp';
+      case RtpStreamDirection.outbound:
+        return 'outbound-rtp';
+    }
+  }
+
+  String get bytesField {
+    switch (this) {
+      case RtpStreamDirection.inbound:
+        return 'bytesReceived';
+      case RtpStreamDirection.outbound:
+        return 'bytesSent';
+    }
+  }
+}
+
+extension _BitrateUnitExt on BitrateUnit {
+  double get scale {
+    switch (this) {
+      case BitrateUnit.bps:
+        return 1;
+      case BitrateUnit.kbps:
+        return 1000;
+      case BitrateUnit.mbps:
+        return 1000000;
+      case BitrateUnit.gbps:
+        return 1000000000;
+    }
+  }
+
+  String get label {
+    switch (this) {
+      case BitrateUnit.bps:
+        return 'bps';
+      case BitrateUnit.kbps:
+        return 'kbps';
+      case BitrateUnit.mbps:
+        return 'Mbps';
+      case BitrateUnit.gbps:
+        return 'Gbps';
+    }
+  }
+}
+
+/// Holds a bitrate sample in bits per second together with the sampled time.
+class BitrateMeasurement {
+  BitrateMeasurement({required this.bitsPerSecond, required this.sampledAt});
+
+  final double bitsPerSecond;
+  final DateTime sampledAt;
+
+  /// Converts the stored bitrate into the requested [unit].
+  double asUnit(BitrateUnit unit) => bitsPerSecond / unit.scale;
+
+  /// Formats the measurement using [unit]. Supply [suffix] to override the
+  /// default unit label (useful when localising strings).
+  String format({BitrateUnit unit = BitrateUnit.kbps, int fractionDigits = 0, String? suffix}) {
+    final value = asUnit(unit);
+    final label = suffix ?? unit.label;
+    final formatted = value.toStringAsFixed(fractionDigits);
+    return label.isEmpty ? formatted : '$formatted $label';
+  }
+}
+
+/// Classification thresholds that translate bitrate samples into
+/// [NetworkQuality] values.
+///
+/// The numeric values are expressed in **kilobits per second**. Lower each
+/// threshold to make the evaluator more tolerant on constrained networks, or
+/// increase them to demand higher quality before reporting "excellent". Ensure
+/// [staleAfter] is greater than your sampling interval so transient gaps do not
+/// instantly downgrade streams to `stale`.
+class NetworkQualityThresholds {
+  const NetworkQualityThresholds({
+    this.excellentMinimumKbps = 2500,
+    this.goodMinimumKbps = 1200,
+    this.poorMinimumKbps = 600,
+    this.missingDataQuality = NetworkQuality.veryPoor,
+    this.staleQuality = NetworkQuality.veryPoor,
+    this.staleAfter = const Duration(seconds: 6),
+  })  : assert(excellentMinimumKbps >= goodMinimumKbps),
+        assert(goodMinimumKbps >= poorMinimumKbps),
+        assert(poorMinimumKbps >= 0);
+
+  final double excellentMinimumKbps;
+  final double goodMinimumKbps;
+  final double poorMinimumKbps;
+  final NetworkQuality missingDataQuality;
+  final NetworkQuality staleQuality;
+  final Duration staleAfter;
+
+  /// Maps a [BitrateMeasurement] to a [NetworkQuality] using the configured thresholds.
+  NetworkQuality classify(BitrateMeasurement measurement) {
+    final kbps = measurement.asUnit(BitrateUnit.kbps);
+    if (kbps >= excellentMinimumKbps) {
+      return NetworkQuality.excellent;
+    }
+    if (kbps >= goodMinimumKbps) {
+      return NetworkQuality.good;
+    }
+    if (kbps >= poorMinimumKbps) {
+      return NetworkQuality.poor;
+    }
+    return NetworkQuality.veryPoor;
+  }
+}
+
+/// Captures the outcome of a network quality evaluation.
+///
+/// When [reason] is [NetworkQualityReason.measurement] [measurement] is
+/// guaranteed to be non-null. Otherwise, it indicates whether the result is
+/// still warming up (`insufficientData`) or the stream went silent (`stale`).
+class NetworkQualitySnapshot {
+  NetworkQualitySnapshot({
+    required this.quality,
+    required this.evaluatedAt,
+    this.measurement,
+    required this.reason,
+  });
+
+  final NetworkQuality quality;
+  final DateTime evaluatedAt;
+  final BitrateMeasurement? measurement;
+  final NetworkQualityReason reason;
+
+  /// Convenience flag indicating whether a concrete bitrate sample backs the
+  /// reported [quality].
+  bool get hasMeasurement => measurement != null;
+}
+
+/// Declarative matcher used to locate a specific RTP stats entry.
+///
+/// When multiple properties are supplied all of them must match. Provide
+/// [historyKey] or [historyKeyResolver] to avoid collisions when monitoring
+/// multiple tracks with the same mid. Set [fallbackToFirstMatching] to `false`
+/// if you prefer returning `null` instead of silently inspecting the first
+/// video stream when no explicit match is found.
+class RtpStreamQuery {
+  const RtpStreamQuery({
+    this.mid,
+    this.trackId,
+    this.ssrc,
+    this.kind = 'video',
+    this.direction = RtpStreamDirection.inbound,
+    this.where,
+    this.historyKey,
+    this.historyKeyResolver,
+    this.fallbackToFirstMatching = true,
+  });
+
+  final String? mid;
+  final String? trackId;
+  final String? ssrc;
+  final String? kind;
+  final RtpStreamDirection direction;
+  final bool Function(dynamic report)? where;
+  final String? historyKey;
+  final String Function(dynamic report)? historyKeyResolver;
+  final bool fallbackToFirstMatching;
+
+  /// Checks whether [report] satisfies all constraints specified on this query.
+  bool matches(dynamic report) {
+    if (report == null) {
+      return false;
+    }
+    if (report.type != direction.statsType) {
+      return false;
+    }
+    final values = _valuesOf(report);
+    if (kind != null && values['kind'] != kind) {
+      return false;
+    }
+    if (mid != null && values['mid'] != mid) {
+      return false;
+    }
+    if (trackId != null && !_matchesTrackId(values, trackId!)) {
+      return false;
+    }
+    if (ssrc != null && _stringOrNull(values['ssrc']) != ssrc) {
+      return false;
+    }
+    if (where != null && where!(report) == false) {
+      return false;
+    }
+    return true;
+  }
+
+  /// Returns the key used to store history for bitrate deltas.
+  String resolveHistoryKey(dynamic report) {
+    if (historyKeyResolver != null) {
+      return historyKeyResolver!(report);
+    }
+    if (historyKey != null) {
+      return historyKey!;
+    }
+    final values = _valuesOf(report);
+    final resolvedMid = _stringOrNull(values['mid']);
+    final resolvedSsrc = _stringOrNull(values['ssrc']);
+    final reportId = _stringOrNull(report.id);
+    return mid ?? resolvedMid ?? resolvedSsrc ?? reportId ?? direction.statsType;
+  }
+
+  static Map<String, dynamic> _valuesOf(dynamic report) {
+    final raw = report.values;
+    if (raw is Map<String, dynamic>) {
+      return raw;
+    }
+    if (raw is Map) {
+      return Map<String, dynamic>.from(raw);
+    }
+    return const <String, dynamic>{};
+  }
+
+  static bool _matchesTrackId(Map<String, dynamic> values, String expected) {
+    final candidates = <String?>[
+      _stringOrNull(values['trackIdentifier']),
+      _stringOrNull(values['trackId']),
+      _stringOrNull(values['track_id']),
+    ];
+    return candidates.whereType<String>().any((element) => element == expected);
+  }
+
+  static String? _stringOrNull(dynamic value) {
+    if (value == null) {
+      return null;
+    }
+    return value.toString();
+  }
+}
+
+/// Utility wrapper around `RTCPeerConnection.getStats()` that offers
+/// incremental bitrate and network quality helpers.
+///
+/// Instances are lightweight and rely on a caller-provided function to access
+/// the current peer connection, which makes the helper resilient to
+/// reconnections (e.g. replacing the peer connection during a renegotiation).
+class JanusStreamStats {
+  JanusStreamStats({
+    required RTCPeerConnection? Function() peerConnectionProvider,
+    DateTime Function()? clock,
+    BitrateFormatter? defaultFormatter,
+  })  : _peerConnectionProvider = peerConnectionProvider,
+        _clock = clock ?? DateTime.now,
+        _defaultFormatter = defaultFormatter;
+
+  final RTCPeerConnection? Function() _peerConnectionProvider;
+  final DateTime Function() _clock;
+  final BitrateFormatter? _defaultFormatter;
+  final Map<String, _RtpSample> _history = <String, _RtpSample>{};
+
+  /// Calculates the bitrate in bits-per-second for the RTP stream matched by
+  /// [query]. Consecutive invocations cache the previous sample to compute the
+  /// delta; the first call therefore returns `null`.
+  Future<BitrateMeasurement?> bitrate({RtpStreamQuery query = const RtpStreamQuery()}) async {
+    final connection = _peerConnectionProvider();
+    if (connection == null) {
+      return null;
+    }
+    final stats = await connection.getStats();
+    final now = _clock();
+
+    final matching = stats.where((report) => query.matches(report)).toList();
+    dynamic targetReport = matching.isNotEmpty
+        ? matching.first
+        : (query.fallbackToFirstMatching ? _firstWhereOrNull(stats, (report) => _directionKindMatch(report, query.direction, query.kind)) : null);
+
+    if (targetReport == null) {
+      return null;
+    }
+
+    final values = RtpStreamQuery._valuesOf(targetReport);
+    final bytesValue = values[query.direction.bytesField];
+    final currentBytes = _asPositiveInt(bytesValue);
+    if (currentBytes == null) {
+      return null;
+    }
+
+    final historyKey = query.resolveHistoryKey(targetReport);
+    final previous = _history[historyKey];
+    _history[historyKey] = _RtpSample(bytes: currentBytes, timestampMillis: now.millisecondsSinceEpoch);
+
+    if (previous == null) {
+      return null;
+    }
+
+    final bytesDiff = currentBytes - previous.bytes;
+    final timeDiffSeconds = (now.millisecondsSinceEpoch - previous.timestampMillis) / 1000.0;
+    if (bytesDiff < 0 || timeDiffSeconds <= 0) {
+      return null;
+    }
+    final bitsPerSecond = (bytesDiff * 8) / timeDiffSeconds;
+    return BitrateMeasurement(bitsPerSecond: bitsPerSecond, sampledAt: now);
+  }
+
+  /// Returns a formatted string representation of [bitrate]. When no
+  /// measurement is available the result is `null`.
+  Future<String?> bitrateLabel({
+    RtpStreamQuery query = const RtpStreamQuery(),
+    BitrateUnit unit = BitrateUnit.kbps,
+    int fractionDigits = 0,
+    BitrateFormatter? formatter,
+    String? suffix,
+  }) async {
+    final measurement = await bitrate(query: query);
+    if (measurement == null) {
+      return null;
+    }
+    if (formatter != null) {
+      return formatter(measurement);
+    }
+    if (_defaultFormatter != null) {
+      return _defaultFormatter(measurement);
+    }
+    return measurement.format(unit: unit, fractionDigits: fractionDigits, suffix: suffix);
+  }
+
+  /// Evaluates network quality according to [thresholds]. When [previous] is
+  /// provided it is used to decide whether missing samples should be treated as
+  /// stale (e.g. the publisher disappeared) or still warming up.
+  Future<NetworkQualitySnapshot> networkQuality({
+    RtpStreamQuery query = const RtpStreamQuery(),
+    NetworkQualityThresholds thresholds = const NetworkQualityThresholds(),
+    NetworkQualitySnapshot? previous,
+  }) async {
+    final measurement = await bitrate(query: query);
+    final now = _clock();
+    if (measurement == null) {
+      final reason = previous != null && now.difference(previous.evaluatedAt) >= thresholds.staleAfter ? NetworkQualityReason.stale : NetworkQualityReason.insufficientData;
+      final fallbackQuality = reason == NetworkQualityReason.stale ? thresholds.staleQuality : thresholds.missingDataQuality;
+      return NetworkQualitySnapshot(quality: fallbackQuality, evaluatedAt: now, measurement: null, reason: reason);
+    }
+    final quality = thresholds.classify(measurement);
+    return NetworkQualitySnapshot(quality: quality, evaluatedAt: now, measurement: measurement, reason: NetworkQualityReason.measurement);
+  }
+
+  /// Continuously samples [networkQuality] and emits snapshots over time.
+  ///
+  /// Use [emitDistinct] to suppress identical consecutive values and
+  /// [emitOnListen] to force an immediate evaluation when a listener is added.
+  Stream<NetworkQualitySnapshot> watchNetworkQuality({
+    RtpStreamQuery query = const RtpStreamQuery(),
+    NetworkQualityThresholds thresholds = const NetworkQualityThresholds(),
+    Duration sampleInterval = const Duration(seconds: 2),
+    bool emitDistinct = true,
+    bool emitOnListen = true,
+  }) {
+    final controller = StreamController<NetworkQualitySnapshot>.broadcast();
+    Timer? timer;
+    bool sampling = false;
+    NetworkQualitySnapshot? lastSnapshot;
+
+    Future<void> sample() async {
+      if (sampling) {
+        return;
+      }
+      sampling = true;
+      try {
+        final snapshot = await networkQuality(query: query, thresholds: thresholds, previous: lastSnapshot);
+        final previousSnapshot = lastSnapshot;
+        lastSnapshot = snapshot;
+        final shouldEmit = !emitDistinct || previousSnapshot == null || previousSnapshot.quality != snapshot.quality || previousSnapshot.reason != snapshot.reason;
+        if (shouldEmit && !controller.isClosed) {
+          controller.add(snapshot);
+        }
+      } catch (error, stackTrace) {
+        if (!controller.isClosed) {
+          controller.addError(error, stackTrace);
+        }
+      } finally {
+        sampling = false;
+      }
+    }
+
+    controller.onListen = () {
+      if (emitOnListen) {
+        sample();
+      }
+      timer ??= Timer.periodic(sampleInterval, (_) => sample());
+    };
+
+    controller.onCancel = () {
+      if (!controller.hasListener) {
+        timer?.cancel();
+        timer = null;
+      }
+    };
+
+    return controller.stream;
+  }
+
+  /// Clears cached byte counters so the next bitrate calculation restarts the
+  /// measurement window. Provide [historyKey] to reset a single stream.
+  void clearHistory({String? historyKey}) {
+    if (historyKey != null) {
+      _history.remove(historyKey);
+    } else {
+      _history.clear();
+    }
+  }
+
+  static dynamic _firstWhereOrNull(Iterable<dynamic> source, bool Function(dynamic) test) {
+    for (final element in source) {
+      if (test(element)) {
+        return element;
+      }
+    }
+    return null;
+  }
+
+  static bool _directionKindMatch(dynamic report, RtpStreamDirection direction, String? kind) {
+    if (report == null || report.type != direction.statsType) {
+      return false;
+    }
+    if (kind == null) {
+      return true;
+    }
+    final values = RtpStreamQuery._valuesOf(report);
+    return values['kind'] == kind;
+  }
+
+  static int? _asPositiveInt(dynamic value) {
+    if (value == null) {
+      return null;
+    }
+    if (value is int) {
+      return value;
+    }
+    if (value is double) {
+      return value.isFinite ? value.toInt() : null;
+    }
+    if (value is num) {
+      return value.toInt();
+    }
+    final parsed = int.tryParse(value.toString());
+    return parsed;
+  }
+}
+
+class _RtpSample {
+  _RtpSample({required this.bytes, required this.timestampMillis});
+
+  final int bytes;
+  final int timestampMillis;
+}
+
 class JanusPlugin {
   void onCreate() {}
   int? handleId;
@@ -58,9 +529,8 @@ class JanusPlugin {
   StreamSubscription? _wsStreamSubscription;
   late bool pollingActive;
 
-  // Bitrate calculation variables - separate history per mid
-  Map<String, int> _lastBytesReceivedMap = {};
-  Map<String, int> _lastTimestampMap = {};
+  /// Exposes WebRTC statistics helpers (bitrate calculations, history, etc.).
+  late final JanusStreamStats mediaStats;
 
   RTCPeerConnection? get peerConnection {
     return webRTCHandle?.peerConnection;
@@ -70,6 +540,7 @@ class JanusPlugin {
     _context = context;
     _session = session;
     _transport = transport;
+    mediaStats = JanusStreamStats(peerConnectionProvider: () => webRTCHandle?.peerConnection);
   }
 
   /// Initializes or re-initializes the internal WebRTC stack for this plugin.
@@ -755,62 +1226,157 @@ class JanusPlugin {
 
   /// Calculates the bitrate of the inbound video stream identified by [mid].
   ///
-  /// When [mid] is omitted, statistics for the first video inbound RTP stream
-  /// are returned. Mirrors the behaviour of `Janus#getBitrate` in janus.js.
-  Future<String?> getBitrate([String? mid]) async {
-    if (webRTCHandle?.peerConnection == null) {
-      return null;
-    }
+  /// When [mid] is omitted, the first inbound video RTP stream is used. This
+  /// retains the original string-based API while delegating the heavy lifting to
+  /// [mediaStats] so developers can opt into richer statistics when needed.
+  Future<String?> getBitrate([String? mid]) {
+    return mediaStats.bitrateLabel(
+      query: RtpStreamQuery(mid: mid),
+      unit: BitrateUnit.kbps,
+      fractionDigits: 0,
+      suffix: 'kbps',
+    );
+  }
 
-    final stats = await webRTCHandle!.peerConnection!.getStats();
-    final nowMillis = DateTime.now().millisecondsSinceEpoch;
+  /// Returns a strongly typed bitrate measurement that can be formatted or
+  /// transformed as desired by the caller.
+  ///
+  /// When monitoring a local publisher, set [direction] to
+  /// [RtpStreamDirection.outbound] so byte counters reflect the proper stats
+  /// entry. Supplying [historyKey] is recommended when querying multiple mids
+  /// that might rotate identifiers (e.g. replacing transceivers).
+  Future<BitrateMeasurement?> getBitrateMeasurement({
+    String? mid,
+    String? kind,
+    RtpStreamDirection direction = RtpStreamDirection.inbound,
+    bool fallbackToFirstMatching = true,
+    String? trackId,
+    String? ssrc,
+    String? historyKey,
+    bool Function(dynamic report)? where,
+    String Function(dynamic report)? historyKeyResolver,
+  }) {
+    return mediaStats.bitrate(
+      query: RtpStreamQuery(
+        mid: mid,
+        kind: kind ?? 'video',
+        direction: direction,
+        fallbackToFirstMatching: fallbackToFirstMatching,
+        trackId: trackId,
+        ssrc: ssrc,
+        historyKey: historyKey,
+        where: where,
+        historyKeyResolver: historyKeyResolver,
+      ),
+    );
+  }
 
-    String? result;
+  /// Produces a single network quality snapshot using the underlying stats.
+  ///
+  /// Default thresholds are tuned for HD video; adjust [thresholds] to match
+  /// your bandwidth expectations. Remember to flip [direction] to
+  /// [RtpStreamDirection.outbound] when evaluating your own published tracks.
+  Future<NetworkQualitySnapshot> getNetworkQuality({
+    String? mid,
+    String? kind,
+    RtpStreamDirection direction = RtpStreamDirection.inbound,
+    bool fallbackToFirstMatching = true,
+    String? trackId,
+    String? ssrc,
+    String? historyKey,
+    bool Function(dynamic report)? where,
+    String Function(dynamic report)? historyKeyResolver,
+    NetworkQualityThresholds thresholds = const NetworkQualityThresholds(),
+  }) {
+    return mediaStats.networkQuality(
+      query: RtpStreamQuery(
+        mid: mid,
+        kind: kind ?? 'video',
+        direction: direction,
+        fallbackToFirstMatching: fallbackToFirstMatching,
+        trackId: trackId,
+        ssrc: ssrc,
+        historyKey: historyKey,
+        where: where,
+        historyKeyResolver: historyKeyResolver,
+      ),
+      thresholds: thresholds,
+    );
+  }
 
-    for (var report in stats) {
-      // Look for the specific mid or first video stream
-      bool isTargetStream = false;
+  /// Continuously samples network quality and emits high-level snapshots.
+  ///
+  /// Consumers should cancel the returned subscription when the tile is
+  /// disposed to avoid leaking timers. Set [emitDistinct] to `false` if you want
+  /// periodic updates even when the quality stays the same.
+  Stream<NetworkQualitySnapshot> watchNetworkQuality({
+    String? mid,
+    String? kind,
+    RtpStreamDirection direction = RtpStreamDirection.inbound,
+    bool fallbackToFirstMatching = true,
+    String? trackId,
+    String? ssrc,
+    String? historyKey,
+    bool Function(dynamic report)? where,
+    String Function(dynamic report)? historyKeyResolver,
+    NetworkQualityThresholds thresholds = const NetworkQualityThresholds(),
+    Duration sampleInterval = const Duration(seconds: 2),
+    bool emitDistinct = true,
+    bool emitOnListen = true,
+  }) {
+    return mediaStats.watchNetworkQuality(
+      query: RtpStreamQuery(
+        mid: mid,
+        kind: kind ?? 'video',
+        direction: direction,
+        fallbackToFirstMatching: fallbackToFirstMatching,
+        trackId: trackId,
+        ssrc: ssrc,
+        historyKey: historyKey,
+        where: where,
+        historyKeyResolver: historyKeyResolver,
+      ),
+      thresholds: thresholds,
+      sampleInterval: sampleInterval,
+      emitDistinct: emitDistinct,
+      emitOnListen: emitOnListen,
+    );
+  }
 
-      if (mid != null) {
-        // Look for specific mid
-        if (report.values['mid'] == mid && report.type == 'inbound-rtp' && report.values['kind'] == 'video') {
-          isTargetStream = true;
-        }
-      } else {
-        // Look for first video stream
-        if (report.type == 'inbound-rtp' && report.values['kind'] == 'video') {
-          isTargetStream = true;
-        }
-      }
-
-      if (isTargetStream && report.values['bytesReceived'] != null) {
-        final currentBytesReceived = report.values['bytesReceived'] as int;
-
-        // Determine history key (use "default" if mid is null)
-        final historyKey = mid ?? "default";
-
-        // Calculate bitrate if we have previous values
-        if (_lastBytesReceivedMap[historyKey] != null && _lastTimestampMap[historyKey] != null) {
-          final bytesDiff = currentBytesReceived - _lastBytesReceivedMap[historyKey]!;
-          final timeDiff = (nowMillis - _lastTimestampMap[historyKey]!) / 1000.0;
-
-          if (timeDiff > 0 && bytesDiff >= 0) {
-            final bitsDiff = bytesDiff * 8;
-            final bitsPerSecond = bitsDiff / timeDiff;
-            final kbps = (bitsPerSecond / 1000).round();
-
-            result = "$kbps kbps";
-          }
-        }
-
-        // Store current values for next calculation
-        _lastBytesReceivedMap[historyKey] = currentBytesReceived;
-        _lastTimestampMap[historyKey] = nowMillis;
-        break; // Found our target stream
-      }
-    }
-
-    return result;
+  /// Convenience wrapper that emits only the [NetworkQuality] level.
+  ///
+  /// Handy for widgets that only care about the label/icon but not the raw
+  /// bitrate sample that produced it.
+  Stream<NetworkQuality> watchNetworkQualityLevel({
+    String? mid,
+    String? kind,
+    RtpStreamDirection direction = RtpStreamDirection.inbound,
+    bool fallbackToFirstMatching = true,
+    String? trackId,
+    String? ssrc,
+    String? historyKey,
+    bool Function(dynamic report)? where,
+    String Function(dynamic report)? historyKeyResolver,
+    NetworkQualityThresholds thresholds = const NetworkQualityThresholds(),
+    Duration sampleInterval = const Duration(seconds: 2),
+    bool emitDistinct = true,
+    bool emitOnListen = true,
+  }) {
+    return watchNetworkQuality(
+      mid: mid,
+      kind: kind,
+      direction: direction,
+      fallbackToFirstMatching: fallbackToFirstMatching,
+      trackId: trackId,
+      ssrc: ssrc,
+      historyKey: historyKey,
+      where: where,
+      historyKeyResolver: historyKeyResolver,
+      thresholds: thresholds,
+      sampleInterval: sampleInterval,
+      emitDistinct: emitDistinct,
+      emitOnListen: emitOnListen,
+    ).map((snapshot) => snapshot.quality);
   }
 
   /// Sends a text [message] over the default data channel.
