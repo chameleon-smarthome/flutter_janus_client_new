@@ -543,6 +543,27 @@ class JanusPlugin {
     mediaStats = JanusStreamStats(peerConnectionProvider: () => webRTCHandle?.peerConnection);
   }
 
+  /// Builds a REST polling URI by preserving the provided base endpoint path
+  /// and appending only the `sessionId` segment.
+  static Uri buildPollingUri({
+    required String baseUrl,
+    required int sessionId,
+    required Map<String, String> queryParameters,
+  }) {
+    final baseUri = Uri.parse(baseUrl);
+    final mergedQueryParameters = <String, String>{
+      ...baseUri.queryParameters,
+      ...queryParameters,
+    };
+    return baseUri.replace(
+      pathSegments: <String>[
+        ...baseUri.pathSegments.where((segment) => segment.isNotEmpty),
+        sessionId.toString(),
+      ],
+      queryParameters: mergedQueryParameters.isEmpty ? null : mergedQueryParameters,
+    );
+  }
+
   /// Initializes or re-initializes the internal WebRTC stack for this plugin.
   ///
   /// The method expects `_webRtcConfiguration` to be populated via [_init] and
@@ -783,7 +804,12 @@ class JanusPlugin {
       if (_context._apiSecret != null) {
         queryParameters["apisecret"] = _context._apiSecret!;
       }
-      var response = (await http.get(Uri.https(extractDomainFromUrl(_transport!.url!), "janus/" + _session!.sessionId.toString(), queryParameters)));
+      final pollingUri = JanusPlugin.buildPollingUri(
+        baseUrl: _transport!.url!,
+        sessionId: _session!.sessionId!,
+        queryParameters: queryParameters,
+      );
+      var response = (await http.get(pollingUri));
       if (response.statusCode != 200 || response.body.isEmpty) {
         var errorMessage = "polling is failed from janus with error code : ${response.statusCode} , header : ${response.headers}";
         print(response.body);
@@ -837,7 +863,7 @@ class JanusPlugin {
   /// Disposes the active local stream and, unless [ignoreRemote] is `true`, the
   /// remote stream as well. Optional [video] and [audio] flags allow selectively
   /// stopping tracks before disposing their parent streams.
-  Future<void> _disposeMediaStreams({ignoreRemote = false, video = true, audio = true}) async {
+  Future<void> _disposeMediaStreams({bool ignoreRemote = false, bool video = true, bool audio = true}) async {
     _context._logger.finest('disposing localStream and remoteStream if it already exists');
     if (webRTCHandle?.localStream != null) {
       if (audio) {
@@ -878,13 +904,14 @@ class JanusPlugin {
   }
 
   /// Stops polling and disposes media resources without fully disposing the handle.
-  Future<void> hangup() async {
+  Future<void> hangup({bool disposeStream = true}) async {
     _cancelPollingTimer();
-    await _disposeMediaStreams();
+    if (disposeStream) {
+      await _disposeMediaStreams();
+    }
   }
 
-  /// Disposes timers, stream controllers, transports, and media tied to this plugin.
-  Future<void> dispose() async {
+  void closeStreamControllers() {
     this.pollingActive = false;
     _pollingTimer?.cancel();
     _streamController?.close();
@@ -897,10 +924,19 @@ class JanusPlugin {
     _onDataStreamController?.close();
     _renegotiationNeededController?.close();
     _wsStreamSubscription?.cancel();
-    await stopAllTracks(webRTCHandle?.localStream);
-    (await webRTCHandle?.peerConnection?.getTransceivers())?.forEach((element) async {
-      await element.stop();
-    });
+  }
+
+  /// Disposes timers, stream controllers, transports, and media tied to this plugin.
+  Future<void> dispose({bool runStopAllTracks = true, bool runStopTransReciever = true}) async {
+    closeStreamControllers();
+    if (runStopAllTracks) {
+      await stopAllTracks(webRTCHandle?.localStream);
+    }
+    if (runStopTransReciever) {
+      (await webRTCHandle?.peerConnection?.getTransceivers())?.forEach((element) async {
+        await element.stop();
+      });
+    }
     await webRTCHandle?.peerConnection?.close();
     await webRTCHandle?.remoteStream?.dispose();
     await webRTCHandle?.localStream?.dispose();
