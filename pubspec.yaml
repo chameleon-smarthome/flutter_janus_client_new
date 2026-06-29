@@ -10,15 +10,15 @@ environment:
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  dartdoc: 9.0.2
+  dartdoc: 9.0.5
 
 dependencies:
   flutter_web_plugins:
     sdk: flutter
   flutter:
     sdk: flutter
-  flutter_webrtc: 1.4.1
-  path_provider: 2.1.5
+  flutter_webrtc: 1.5.2
+  path_provider: 2.1.6
   http: 1.6.0
   web_socket_channel: 3.0.3
   uuid: 4.5.3
